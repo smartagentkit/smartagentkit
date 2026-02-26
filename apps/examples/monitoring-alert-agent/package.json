@@ -1,0 +1,25 @@
+{
+  "name": "monitoring-alert-agent-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example: Guardian watchdog that monitors wallets and auto-pauses on anomalies",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/monitor.ts",
+    "start:mock": "tsx src/monitor.ts --mock",
+    "build": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@smartagentkit/sdk": "workspace:*",
+    "@smartagentkit/testing": "workspace:*",
+    "viem": "^2.46.0",
+    "dotenv": "^16.4.0",
+    "chalk": "^5.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+@safe-global/=lib/safe-smart-account/
+safe7579/=lib/safe7579/
+modulekit/=lib/modulekit/src/
+core-modules/=lib/core-modules/src/
+@openzeppelin/=lib/openzeppelin-contracts/
+account-abstraction/=lib/account-abstraction/contracts/
+@ERC4337/account-abstraction/=lib/account-abstraction/
+solady/=lib/solady/src/

@@ -1,0 +1,32 @@
+{
+  "name": "smartagentkit",
+  "private": true,
+  "description": "Open-source SDK and smart contract toolkit for policy-governed AI agent smart wallets",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartagentkit/smartagentkit.git"
+  },
+  "homepage": "https://github.com/smartagentkit/smartagentkit#readme",
+  "bugs": {
+    "url": "https://github.com/smartagentkit/smartagentkit/issues"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "build": "turbo build",
+    "test": "turbo test",
+    "test:contracts": "cd packages/contracts && forge test",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "clean": "turbo clean",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\""
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.0",
+    "prettier": "^3.5.0"
+  }
+}

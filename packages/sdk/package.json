@@ -1,0 +1,59 @@
+{
+  "name": "@smartagentkit/sdk",
+  "version": "0.1.0",
+  "description": "Deploy and manage policy-governed smart wallets for AI agents",
+  "license": "MIT",
+  "author": "SmartAgentKit Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartagentkit/smartagentkit.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/smartagentkit/smartagentkit#readme",
+  "bugs": {
+    "url": "https://github.com/smartagentkit/smartagentkit/issues"
+  },
+  "keywords": [
+    "smart-wallet",
+    "ai-agent",
+    "erc4337",
+    "erc7579",
+    "account-abstraction",
+    "policy",
+    "spending-limit",
+    "safe",
+    "ethereum",
+    "defi"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "viem": "^2.46.0",
+    "permissionless": "^0.2.0",
+    "@rhinestone/module-sdk": "^0.2.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "vitest": "^3.0.0",
+    "typescript": "^5.7.0"
+  }
+}

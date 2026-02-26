@@ -1,0 +1,26 @@
+{
+  "name": "treasury-management-agent-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Example: Claude-powered treasury rebalancer using SmartAgentKit + LangChain",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/agent.ts",
+    "start:mock": "tsx src/agent.ts --mock",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@smartagentkit/sdk": "workspace:*",
+    "@smartagentkit/langchain": "workspace:*",
+    "@smartagentkit/testing": "workspace:*",
+    "@langchain/anthropic": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/core": "^0.3.0",
+    "viem": "^2.46.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

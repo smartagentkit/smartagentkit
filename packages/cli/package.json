@@ -1,0 +1,54 @@
+{
+  "name": "smartagentkit",
+  "version": "0.1.0",
+  "description": "CLI tool for managing policy-governed AI agent smart wallets",
+  "license": "MIT",
+  "author": "SmartAgentKit Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartagentkit/smartagentkit.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/smartagentkit/smartagentkit#readme",
+  "bugs": {
+    "url": "https://github.com/smartagentkit/smartagentkit/issues"
+  },
+  "keywords": [
+    "smart-wallet",
+    "ai-agent",
+    "cli",
+    "erc4337",
+    "account-abstraction",
+    "policy",
+    "ethereum"
+  ],
+  "type": "module",
+  "bin": {
+    "smartagentkit": "./dist/index.js",
+    "sak": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@smartagentkit/sdk": "workspace:*",
+    "commander": "^13.1.0",
+    "chalk": "^5.4.0",
+    "ora": "^8.2.0",
+    "cli-table3": "^0.6.5",
+    "viem": "^2.46.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "vitest": "^3.0.0",
+    "typescript": "^5.7.0"
+  }
+}

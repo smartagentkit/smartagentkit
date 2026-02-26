@@ -1,0 +1,59 @@
+{
+  "name": "@smartagentkit/langchain",
+  "version": "0.1.0",
+  "description": "LangChain integration for SmartAgentKit — AI agent smart wallet tools",
+  "license": "MIT",
+  "author": "SmartAgentKit Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/smartagentkit/smartagentkit.git",
+    "directory": "packages/integrations/langchain"
+  },
+  "homepage": "https://github.com/smartagentkit/smartagentkit#readme",
+  "bugs": {
+    "url": "https://github.com/smartagentkit/smartagentkit/issues"
+  },
+  "keywords": [
+    "smart-wallet",
+    "ai-agent",
+    "langchain",
+    "erc4337",
+    "account-abstraction",
+    "policy",
+    "ethereum",
+    "defi"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "pnpm build",
+    "test": "vitest run",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@smartagentkit/sdk": "workspace:*",
+    "zod": "^3.24.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.3.0"
+  },
+  "devDependencies": {
+    "@langchain/core": "^0.3.0",
+    "tsup": "^8.4.0",
+    "vitest": "^3.0.0",
+    "typescript": "^5.7.0"
+  }
+}
