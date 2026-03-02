@@ -3,7 +3,14 @@ pragma solidity ^0.8.29;
 
 import "forge-std/Test.sol";
 import { IERC7579Account } from "modulekit/accounts/common/interfaces/IERC7579Account.sol";
-import { ModeLib, ModeCode } from "modulekit/accounts/common/lib/ModeLib.sol";
+import {
+    ModeLib,
+    ModeCode,
+    CALLTYPE_DELEGATECALL,
+    EXECTYPE_DEFAULT,
+    MODE_DEFAULT,
+    ModePayload
+} from "modulekit/accounts/common/lib/ModeLib.sol";
 import { ExecutionLib } from "modulekit/accounts/erc7579/lib/ExecutionLib.sol";
 import { EmergencyPauseHook } from "../../src/modules/EmergencyPauseHook.sol";
 
@@ -711,5 +718,112 @@ contract EmergencyPauseHookTest is Test {
         vm.prank(account);
         vm.expectRevert(abi.encodeWithSelector(EmergencyPauseHook.WalletPaused.selector, account));
         hook.setGuardian(makeAddr("newGuardian3"));
+    }
+
+    // ─── SC-2: Self-Call Blocking (HookDestruct) ────────────────
+
+    function test_selfCall_setGuardian_blocked() public {
+        _installDefault();
+
+        // Agent tries to call EmergencyPauseHook.setGuardian via UserOp
+        bytes memory callData = abi.encodeWithSelector(
+            EmergencyPauseHook.setGuardian.selector,
+            makeAddr("maliciousGuardian")
+        );
+        bytes memory msgData = _buildSingleExecMsgData(address(hook), 0, callData);
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.SelfCallBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    function test_selfCall_setAutoUnpauseTimeout_blocked() public {
+        _installDefault();
+
+        bytes memory callData = abi.encodeWithSelector(
+            EmergencyPauseHook.setAutoUnpauseTimeout.selector,
+            uint48(0)
+        );
+        bytes memory msgData = _buildSingleExecMsgData(address(hook), 0, callData);
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.SelfCallBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    function test_selfCall_setTrustedForwarder_blocked() public {
+        _installDefault();
+
+        bytes memory callData = abi.encodeWithSelector(
+            bytes4(keccak256("setTrustedForwarder(address)")),
+            address(0)
+        );
+        bytes memory msgData = _buildSingleExecMsgData(address(hook), 0, callData);
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.SelfCallBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    function test_selfCall_clearTrustedForwarder_blocked() public {
+        _installDefault();
+
+        bytes memory callData = abi.encodeWithSelector(
+            bytes4(keccak256("clearTrustedForwarder()"))
+        );
+        bytes memory msgData = _buildSingleExecMsgData(address(hook), 0, callData);
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.SelfCallBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    // ─── SC-2: Delegatecall Blocking ────────────────────────────
+
+    function test_delegatecall_blocked() public {
+        _installDefault();
+
+        // Build delegatecall mode msgData
+        ModeCode mode = ModeLib.encode({
+            callType: CALLTYPE_DELEGATECALL,
+            execType: EXECTYPE_DEFAULT,
+            mode: MODE_DEFAULT,
+            payload: ModePayload.wrap(bytes22(0))
+        });
+        bytes memory execCalldata = ExecutionLib.encodeSingle(recipient, 0, "");
+        bytes memory msgData = abi.encodeCall(IERC7579Account.execute, (mode, execCalldata));
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.DelegateCallNotAllowed.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    // ─── SC-2: Module Management Blocking ───────────────────────
+
+    function test_moduleInstall_blocked() public {
+        _installDefault();
+
+        // Build installModule msgData
+        bytes memory msgData = abi.encodeCall(
+            IERC7579Account.installModule,
+            (1, makeAddr("maliciousModule"), "")
+        );
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.ModuleManagementBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
+    }
+
+    function test_moduleUninstall_blocked() public {
+        _installDefault();
+
+        bytes memory msgData = abi.encodeCall(
+            IERC7579Account.uninstallModule,
+            (1, makeAddr("someModule"), "")
+        );
+
+        vm.prank(account);
+        vm.expectRevert(EmergencyPauseHook.ModuleManagementBlocked.selector);
+        hook.preCheck(sender, 0, msgData);
     }
 }

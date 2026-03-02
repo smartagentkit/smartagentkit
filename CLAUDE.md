@@ -102,6 +102,14 @@ Rhinestone Attester:   0x000000333034E9f539ce08819E12c1b8Cb29084d
 - **Error handling:** Custom error classes, never throw raw strings. In Solidity, use custom errors.
 - **License:** MIT for contracts + SDK
 
+## Documentation
+
+- **MANDATORY**: Any change to a public API must include a corresponding update to `apps/docs/`
+- API changes → update the relevant `apps/docs/api/` page
+- New features → add or update the relevant guide in `apps/docs/guides/`
+- New examples → add a page in `apps/docs/examples/`
+- Run `pnpm docs:build` before committing to catch broken links
+
 ## Monorepo Structure
 
 ```

@@ -3,6 +3,9 @@ import {
   createWalletClient,
   http,
   encodeFunctionData,
+  encodeAbiParameters,
+  isAddress,
+  isHex,
   type Address,
   type Hex,
   type PublicClient,
@@ -19,6 +22,7 @@ import {
   type SmartAccountClient,
 } from "permissionless/clients";
 import { erc7579Actions } from "permissionless/actions/erc7579";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { getHookMultiPlexer } from "@rhinestone/module-sdk";
 
 import type {
@@ -48,10 +52,9 @@ import {
   RHINESTONE_ATTESTER,
   ATTESTERS_THRESHOLD,
   HOOK_MULTIPLEXER_ADDRESS,
-  HOOK_TYPE_GLOBAL,
+  SMART_SESSIONS_VALIDATOR,
   MODULE_ONINSTALL_ABI,
-  SET_TRUSTED_FORWARDER_ABI,
-  HOOK_MULTIPLEXER_ABI,
+  MODULE_ONUNINSTALL_ABI,
   SPENDING_LIMIT_HOOK_ABI,
   EMERGENCY_PAUSE_HOOK_ABI,
 } from "./constants.js";
@@ -92,11 +95,29 @@ type Erc7579SmartAccountClient = SmartAccountClient<any, any, any> & {
 /** Resolve a SignerKey to a viem LocalAccount */
 function resolveAccount(key: SignerKey) {
   if (typeof key === "string") {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
+      throw new WalletCreationError(
+        "Invalid private key format. Expected a 0x-prefixed 32-byte hex string.",
+      );
+    }
     return privateKeyToAccount(key as Hex);
   }
   return mnemonicToAccount(key.mnemonic, {
     addressIndex: key.addressIndex ?? 0,
   });
+}
+
+/**
+ * Wrap raw hook initData in Safe7579's expected format for the `hooks` parameter.
+ *
+ * Safe7579's `_installHook` decodes data as `abi.decode(data, (HookType, bytes4, bytes))`.
+ * HookType.GLOBAL = 0, bytes4(0) for global hooks.
+ */
+function wrapHookInitData(rawInitData: Hex): Hex {
+  return encodeAbiParameters(
+    [{ type: "uint8" }, { type: "bytes4" }, { type: "bytes" }],
+    [0, "0x00000000" as Hex, rawInitData],
+  );
 }
 
 /**
@@ -126,11 +147,10 @@ function resolveAccount(key: SignerKey) {
  * });
  * ```
  */
-/** Stored metadata for an enabled session */
+/** Stored metadata for an enabled session (private key is NOT stored) */
 interface SessionMetadata {
   permissionId: Hex;
   sessionKeyAddress: Address;
-  sessionKeyPrivateKey: Hex;
   expiresAt: number;
   actions: { target: Address; selector: Hex }[];
 }
@@ -138,6 +158,7 @@ interface SessionMetadata {
 export class SmartAgentKitClient implements ISmartAgentKitClient {
   private config: SmartAgentKitConfig;
   private publicClient: PublicClient;
+  private paymasterClient: ReturnType<typeof createPimlicoClient> | undefined;
   private walletClients: Map<Address, Erc7579SmartAccountClient>;
   private sessions: Map<Address, SessionMetadata[]>;
 
@@ -155,6 +176,13 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       chain: config.chain,
       transport: http(config.rpcUrl),
     });
+    if (config.paymasterUrl) {
+      this.paymasterClient = createPimlicoClient({
+        chain: config.chain,
+        transport: http(config.paymasterUrl),
+        entryPoint: { address: ENTRYPOINT_V07, version: "0.7" },
+      });
+    }
     this.walletClients = new Map();
     this.sessions = new Map();
   }
@@ -164,12 +192,10 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   /**
    * Deploy a new policy-governed smart wallet for an AI agent.
    *
-   * The wallet is a Safe smart account with ERC-7579 modules. A
-   * HookMultiPlexer is installed as the single hook, and sub-hooks
-   * (SpendingLimit, Allowlist, EmergencyPause) are routed through it.
-   *
-   * The deployment and policy initialization happen atomically in
-   * the first UserOperation.
+   * The wallet is a Safe smart account with ERC-7579 modules. An empty
+   * HookMultiPlexer is installed during launchpad deployment, then
+   * sub-hooks (SpendingLimit, Allowlist, EmergencyPause) are initialized
+   * and the HMP is reconfigured in the first UserOperation.
    */
   async createWallet(params: CreateWalletParams): Promise<AgentWallet> {
     try {
@@ -193,22 +219,28 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // Validate owner address matches derived key
       if (ownerAccount.address.toLowerCase() !== params.owner.toLowerCase()) {
         throw new WalletCreationError(
-          `Owner address mismatch: key derives ${ownerAccount.address} but params.owner is ${params.owner}`,
+          "Owner address does not match the provided signing key. " +
+            "Verify that the private key or mnemonic corresponds to the specified owner address.",
         );
       }
 
-      // 4. Create HookMultiPlexer with EMPTY sub-hooks.
-      //    Sub-hooks are added in the first UserOp after deployment,
-      //    because they need separate onInstall initialization.
-      const hookModule = getHookMultiPlexer({
+      // 4. Deploy with EMPTY HookMultiPlexer via the `hooks` parameter.
+      //    Safe7579's _installHook expects data as abi.encode(HookType, bytes4, bytes),
+      //    so we wrap the raw initData. Sub-hooks are configured post-deployment
+      //    because the launchpad's delegatecall chain cannot handle non-empty
+      //    globalHooks in HMP.onInstall during initialization.
+      const emptyHMP = getHookMultiPlexer({
         globalHooks: [],
         valueHooks: [],
         delegatecallHooks: [],
         sigHooks: [],
         targetHooks: [],
       });
+      const wrappedEmptyInitData = wrapHookInitData(emptyHMP.initData);
 
       // 5. Create Safe smart account with ERC-7579 launchpad
+      //    The `hooks` parameter installs the empty HMP as the global hook
+      //    during the atomic launchpad deployment.
       const safeAccount = await toSafeSmartAccount({
         client: this.publicClient,
         owners: [ownerAccount],
@@ -221,14 +253,14 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         erc7579LaunchpadAddress: SAFE_7579_LAUNCHPAD,
         hooks: [
           {
-            address: hookModule.address,
-            context: hookModule.initData,
+            address: emptyHMP.address,
+            context: wrappedEmptyInitData as Address,
           },
         ],
         attesters: [RHINESTONE_ATTESTER],
         attestersThreshold: ATTESTERS_THRESHOLD,
         saltNonce: params.salt ?? 0n,
-      });
+      } as Parameters<typeof toSafeSmartAccount>[0]);
 
       // 6. Create SmartAccountClient with ERC-7579 actions
       const smartAccountClient = createSmartAccountClient({
@@ -236,6 +268,16 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         chain: this.config.chain,
         bundlerTransport: http(this.config.bundlerUrl),
         client: this.publicClient,
+        ...(this.paymasterClient ? { paymaster: this.paymasterClient } : {}),
+        ...(this.paymasterClient
+          ? {
+              userOperation: {
+                estimateFeesPerGas: async () =>
+                  (await this.paymasterClient!.getUserOperationGasPrice())
+                    .fast,
+              },
+            }
+          : {}),
       }).extend(erc7579Actions()) as unknown as Erc7579SmartAccountClient;
 
       // 7. Store client for future execute/query calls
@@ -247,7 +289,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
           smartAccountClient,
           policies,
           moduleAddresses,
-          hookModule.address,
+          emptyHMP.address,
         );
       }
 
@@ -262,7 +304,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     } catch (error) {
       if (error instanceof WalletCreationError) throw error;
       throw new WalletCreationError(
-        error instanceof Error ? error.message : String(error),
+        "Wallet deployment failed. Check your RPC/bundler configuration and that the owner key is correct.",
         error,
       );
     }
@@ -298,6 +340,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       chain: this.config.chain,
       bundlerTransport: http(this.config.bundlerUrl),
       client: this.publicClient,
+      ...(this.paymasterClient ? { paymaster: this.paymasterClient } : {}),
+      ...(this.paymasterClient
+        ? {
+            userOperation: {
+              estimateFeesPerGas: async () =>
+                (await this.paymasterClient!.getUserOperationGasPrice()).fast,
+            },
+          }
+        : {}),
     }).extend(erc7579Actions()) as unknown as Erc7579SmartAccountClient;
 
     this.walletClients.set(walletAddress, smartAccountClient);
@@ -339,13 +390,19 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * the smart account via Smart Sessions. The session is scoped to
    * specific target contracts, function selectors, and time window.
    *
-   * @returns The session key address, private key, and permission ID.
+   * @returns The session key address and permission ID.
+   *
+   * SECURITY: The session private key is intentionally NOT returned or stored
+   * by the SDK. The caller should use the `sessionKey` address to identify
+   * the session on-chain, and manage key material externally via a secure
+   * key management system. To use a pre-generated key pair, provide the
+   * session key address in `params.sessionKey`.
    */
   async createSession(
     wallet: AgentWallet,
     params: CreateSessionParams,
     ownerKey: SignerKey,
-  ): Promise<{ sessionKey: Address; privateKey: Hex; permissionId: Hex }> {
+  ): Promise<{ sessionKey: Address; permissionId: Hex }> {
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -414,12 +471,12 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // when processing a UserOp with the ENABLE mode signature.
       // For now, we store the session metadata for later use.
 
-      // 9. Store session metadata
+      // 9. Store session metadata (private key is NOT stored — the caller
+      //    must manage key material externally via a secure key management system)
       const walletSessions = this.sessions.get(wallet.address) ?? [];
       walletSessions.push({
         permissionId,
         sessionKeyAddress: sessionAccount.address,
-        sessionKeyPrivateKey: sessionPrivateKey,
         expiresAt: params.expiresAt,
         actions: params.actions.map((a) => ({
           target: a.target,
@@ -430,13 +487,12 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return {
         sessionKey: sessionAccount.address,
-        privateKey: sessionPrivateKey,
         permissionId,
       };
     } catch (error) {
       if (error instanceof SessionError) throw error;
       throw new SessionError(
-        error instanceof Error ? error.message : String(error),
+        "Session creation failed. Check that the wallet is deployed and the owner key is correct.",
       );
     }
   }
@@ -465,7 +521,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       );
     } catch (error) {
       throw new SessionError(
-        error instanceof Error ? error.message : String(error),
+        "Session revocation failed. Check the permission ID and wallet connection.",
       );
     }
   }
@@ -494,6 +550,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * Hooks (spending limits, allowlist, pause) are enforced on-chain.
    */
   async execute(wallet: AgentWallet, params: ExecuteParams): Promise<Hex> {
+    // Pre-flight validation: block calls to infrastructure contracts and self
+    this.validateTransaction(params, wallet.address);
+
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -509,8 +568,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return hash;
     } catch (error) {
+      if (error instanceof ExecutionError) throw error;
       throw new ExecutionError(
-        error instanceof Error ? error.message : String(error),
+        "Transaction failed. Check that the target, value, and calldata are correct.",
         error,
       );
     }
@@ -524,6 +584,11 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     wallet: AgentWallet,
     params: ExecuteBatchParams,
   ): Promise<Hex> {
+    // Pre-flight validation: block calls to infrastructure contracts and self
+    for (const call of params.calls) {
+      this.validateTransaction(call, wallet.address);
+    }
+
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -539,8 +604,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return hash;
     } catch (error) {
+      if (error instanceof ExecutionError) throw error;
       throw new ExecutionError(
-        error instanceof Error ? error.message : String(error),
+        "Batch transaction failed. Check that all targets, values, and calldata are correct.",
         error,
       );
     }
@@ -672,10 +738,75 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   // ─── Private Helpers ──────────────────────────────────────────
 
   private resolvePolicies(params: CreateWalletParams): PolicyConfig[] {
+    let policies: PolicyConfig[];
     if (params.preset) {
-      return PRESETS[params.preset](params.owner, params.presetParams);
+      policies = PRESETS[params.preset](params.owner, params.presetParams);
+    } else {
+      policies = params.policies ?? [];
     }
-    return params.policies ?? [];
+
+    // Auto-populate protectedAddresses on AllowlistHook policies
+    // to prevent agents from calling hook/infrastructure contracts directly.
+    // This is critical: without it, an agent can call setGuardian(),
+    // clearTrustedForwarder(), removeSpendingLimit(), or removeHook().
+    if (policies.length > 0 && this.config.moduleAddresses) {
+      const moduleAddresses = this.config.moduleAddresses;
+      const infrastructureAddresses: Address[] = [];
+
+      if (moduleAddresses.spendingLimitHook) {
+        infrastructureAddresses.push(moduleAddresses.spendingLimitHook);
+      }
+      if (moduleAddresses.allowlistHook) {
+        infrastructureAddresses.push(moduleAddresses.allowlistHook);
+      }
+      if (moduleAddresses.emergencyPauseHook) {
+        infrastructureAddresses.push(moduleAddresses.emergencyPauseHook);
+      }
+      if (moduleAddresses.automationExecutor) {
+        infrastructureAddresses.push(moduleAddresses.automationExecutor);
+      }
+      // Also protect the HookMultiPlexer and Smart Sessions Validator
+      infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
+      infrastructureAddresses.push(SMART_SESSIONS_VALIDATOR);
+
+      let hasAllowlist = false;
+      for (const policy of policies) {
+        if (policy.type === "allowlist") {
+          hasAllowlist = true;
+          // Merge infrastructure addresses into protectedAddresses, deduplicating
+          const existing = new Set(
+            (policy.protectedAddresses ?? []).map((a) => a.toLowerCase()),
+          );
+          const merged = [...(policy.protectedAddresses ?? [])];
+          for (const addr of infrastructureAddresses) {
+            if (!existing.has(addr.toLowerCase())) {
+              merged.push(addr);
+            }
+          }
+          policy.protectedAddresses = merged;
+        }
+      }
+
+      // If there are hooks but no AllowlistHook, the EmergencyPauseHook's
+      // admin functions and all hooks' setTrustedForwarder are unprotected
+      // on-chain. The SDK-side blocklist (validateTransaction) provides a
+      // client-side defense, but on-chain protection requires AllowlistHook.
+      const hasHooks = policies.some(
+        (p) => p.type === "spending-limit" || p.type === "emergency-pause",
+      );
+      if (hasHooks && !hasAllowlist) {
+        // Inject an AllowlistHook in blocklist mode (allows everything except
+        // protected infrastructure addresses) to provide on-chain protection.
+        policies.push({
+          type: "allowlist",
+          mode: "block",
+          targets: [],
+          protectedAddresses: infrastructureAddresses,
+        });
+      }
+    }
+
+    return policies;
   }
 
   private requireModuleAddresses(
@@ -726,15 +857,19 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   }
 
   /**
-   * Build and send the first UserOp that initializes all sub-hooks
-   * and adds them to the HookMultiPlexer.
+   * Build and send the UserOp that initializes all sub-hooks and
+   * reconfigures the HookMultiPlexer with the full globalHooks list.
    *
-   * This batch includes for each sub-hook:
-   * 1. onInstall(initData) — initialize the sub-hook for this account
-   * 2. setTrustedForwarder(hookMultiPlexer) — so sub-hooks resolve the
-   *    correct account when called through the multiplexer
-   * 3. addHook(hookAddress, GLOBAL) on HookMultiPlexer — register the
-   *    sub-hook for all transactions
+   * The Safe is deployed with an EMPTY HookMultiPlexer (no globalHooks)
+   * because Safe7579's launchpad delegatecall chain cannot handle non-empty
+   * globalHooks during initialization. This method runs post-deployment to:
+   *
+   * 1. HMP.onUninstall("0x") — reset the empty HMP
+   * 2. Sub-hook.onInstall(initData) for each configured hook — sets up
+   *    per-account storage (limits, allowlist, guardian, etc.) with HMP
+   *    as the trusted forwarder
+   * 3. HMP.onInstall(fullInitData) — reinstall HMP with all globalHooks
+   *    sorted ascending (bypasses ERC-7484 registry check that blocks addHook)
    */
   private async initializePolicies(
     client: Erc7579SmartAccountClient,
@@ -742,43 +877,51 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     moduleAddresses: ModuleAddresses,
     hookMultiPlexerAddress: Address,
   ): Promise<void> {
+    // Collect sub-hook addresses first to decide whether HMP reconfiguration is needed.
+    // Only hook-type policies (spending-limit, allowlist, emergency-pause) are sub-hooks;
+    // automation policies are executors and don't affect the HMP.
+    const subHookAddresses = this.collectSubHookAddresses(
+      policies,
+      moduleAddresses,
+    );
+
+    // If no hook policies, nothing to do — the empty HMP stays as-is
+    if (subHookAddresses.length === 0) return;
+
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
 
+    // Step 1: Uninstall the empty HMP (resets initialized flag + clears hooks)
+    calls.push({
+      to: hookMultiPlexerAddress,
+      value: 0n,
+      data: encodeFunctionData({
+        abi: MODULE_ONUNINSTALL_ABI,
+        functionName: "onUninstall",
+        args: ["0x"],
+      }),
+    });
+
+    // Step 2: Initialize each sub-hook with per-account config
     for (const policy of policies) {
       switch (policy.type) {
         case "spending-limit": {
           const hookAddress = moduleAddresses.spendingLimitHook;
-          const initData = encodeSpendingLimitInitData(policy);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          const initData = encodeSpendingLimitInitData(policy, hookMultiPlexerAddress);
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
         case "allowlist": {
           const hookAddress = moduleAddresses.allowlistHook;
-          const initData = encodeAllowlistInitData(policy);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          const initData = encodeAllowlistInitData(policy, hookMultiPlexerAddress);
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
         case "emergency-pause": {
           const hookAddress = moduleAddresses.emergencyPauseHook;
-          const initData = encodeEmergencyPauseInitData(policy);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          const initData = encodeEmergencyPauseInitData(policy, hookMultiPlexerAddress);
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
@@ -789,27 +932,76 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       }
     }
 
-    if (calls.length === 0) return;
+    // Step 3: Reinstall HMP with all globalHooks sorted ascending.
+    // Using onInstall (not addHook) bypasses the ERC-7484 registry
+    // attestation check that blocks our custom hooks.
+    const fullHMP = getHookMultiPlexer({
+      globalHooks: subHookAddresses,
+      valueHooks: [],
+      delegatecallHooks: [],
+      sigHooks: [],
+      targetHooks: [],
+    });
+    calls.push({
+      to: hookMultiPlexerAddress,
+      value: 0n,
+      data: encodeFunctionData({
+        abi: MODULE_ONINSTALL_ABI,
+        functionName: "onInstall",
+        args: [fullHMP.initData],
+      }),
+    });
 
-    // Send as a single batched UserOp
+    // Send as a single batched UserOp (also triggers Safe deployment)
     await client.sendTransaction({
       calls,
     } as Parameters<typeof client.sendTransaction>[0]);
   }
 
   /**
-   * Push the 3 calls needed to initialize a sub-hook:
-   * 1. onInstall(initData) on the sub-hook
-   * 2. setTrustedForwarder(multiplexer) on the sub-hook
-   * 3. addHook(hookAddr, GLOBAL) on the HookMultiPlexer
+   * Collect all sub-hook addresses from the policy configuration.
+   * Used to build the full HMP.onInstall data with all globalHooks
+   * during post-deployment reconfiguration.
+   *
+   * Returns addresses sorted ascending (required by HookMultiPlexer).
+   */
+  private collectSubHookAddresses(
+    policies: PolicyConfig[],
+    moduleAddresses?: ModuleAddresses,
+  ): Address[] {
+    if (!moduleAddresses) return [];
+    const addresses: Address[] = [];
+    for (const policy of policies) {
+      switch (policy.type) {
+        case "spending-limit":
+          addresses.push(moduleAddresses.spendingLimitHook);
+          break;
+        case "allowlist":
+          addresses.push(moduleAddresses.allowlistHook);
+          break;
+        case "emergency-pause":
+          addresses.push(moduleAddresses.emergencyPauseHook);
+          break;
+        // automation is an executor, not a hook
+      }
+    }
+    // HookMultiPlexer requires sorted arrays
+    return addresses.sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase()),
+    );
+  }
+
+  /**
+   * Push the onInstall call needed to initialize a sub-hook.
+   * Configures the hook's per-account storage (trusted forwarder,
+   * limits, allowlist, guardian, etc.).
    */
   private pushSubHookInitCalls(
     calls: { to: Address; value: bigint; data: Hex }[],
     hookAddress: Address,
     initData: Hex,
-    hookMultiPlexerAddress: Address,
   ): void {
-    // 1. Initialize the sub-hook for this account
+    // Initialize the sub-hook for this account (sets trusted forwarder from init data)
     calls.push({
       to: hookAddress,
       value: 0n,
@@ -817,28 +1009,6 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         abi: MODULE_ONINSTALL_ABI,
         functionName: "onInstall",
         args: [initData],
-      }),
-    });
-
-    // 2. Set HookMultiPlexer as trusted forwarder
-    calls.push({
-      to: hookAddress,
-      value: 0n,
-      data: encodeFunctionData({
-        abi: SET_TRUSTED_FORWARDER_ABI,
-        functionName: "setTrustedForwarder",
-        args: [hookMultiPlexerAddress],
-      }),
-    });
-
-    // 3. Register sub-hook as GLOBAL in the HookMultiPlexer
-    calls.push({
-      to: hookMultiPlexerAddress,
-      value: 0n,
-      data: encodeFunctionData({
-        abi: HOOK_MULTIPLEXER_ABI,
-        functionName: "addHook",
-        args: [hookAddress, HOOK_TYPE_GLOBAL],
       }),
     });
   }
@@ -890,6 +1060,89 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         }
       }
     });
+  }
+
+  /**
+   * Collect all known infrastructure addresses that must never be
+   * targeted by agent-initiated transactions. This prevents an AI agent
+   * from calling hook admin functions (setGuardian, clearTrustedForwarder,
+   * removeSpendingLimit, removeHook, etc.) to weaken its own policy constraints.
+   */
+  private getProtectedAddresses(): Set<string> {
+    const addresses = new Set<string>();
+
+    // Always protect the EntryPoint and HookMultiPlexer
+    addresses.add(ENTRYPOINT_V07.toLowerCase());
+    addresses.add(HOOK_MULTIPLEXER_ADDRESS.toLowerCase());
+    // Protect Safe7579 infrastructure
+    addresses.add(SAFE_7579_MODULE.toLowerCase());
+    addresses.add(SAFE_7579_LAUNCHPAD.toLowerCase());
+    // Protect Smart Sessions Validator
+    addresses.add(SMART_SESSIONS_VALIDATOR.toLowerCase());
+
+    // Protect all configured module addresses
+    const moduleAddresses = this.config.moduleAddresses;
+    if (moduleAddresses) {
+      if (moduleAddresses.spendingLimitHook) {
+        addresses.add(moduleAddresses.spendingLimitHook.toLowerCase());
+      }
+      if (moduleAddresses.allowlistHook) {
+        addresses.add(moduleAddresses.allowlistHook.toLowerCase());
+      }
+      if (moduleAddresses.emergencyPauseHook) {
+        addresses.add(moduleAddresses.emergencyPauseHook.toLowerCase());
+      }
+      if (moduleAddresses.automationExecutor) {
+        addresses.add(moduleAddresses.automationExecutor.toLowerCase());
+      }
+    }
+
+    return addresses;
+  }
+
+  /**
+   * Validate a transaction before submission. Blocks calls to infrastructure
+   * addresses and validates input parameters.
+   *
+   * @throws ExecutionError if the transaction targets a protected address
+   *         or has invalid parameters.
+   */
+  private validateTransaction(params: ExecuteParams, walletAddress?: Address): void {
+    // Validate target address format
+    if (!isAddress(params.target)) {
+      throw new ExecutionError(
+        `Invalid target address: "${params.target}". Expected a 0x-prefixed 20-byte hex address.`,
+      );
+    }
+
+    // Block calls to infrastructure contracts
+    const protectedAddresses = this.getProtectedAddresses();
+    if (protectedAddresses.has(params.target.toLowerCase())) {
+      throw new ExecutionError(
+        `Transaction blocked: target ${params.target} is a protected infrastructure contract. ` +
+          "Agent wallets cannot call hook, multiplexer, or EntryPoint contracts directly.",
+      );
+    }
+
+    // Block self-calls: prevent the wallet from targeting itself to uninstall modules
+    if (walletAddress && params.target.toLowerCase() === walletAddress.toLowerCase()) {
+      throw new ExecutionError(
+        `Transaction blocked: target ${params.target} is the wallet's own address. ` +
+          "Self-calls could be used to uninstall security modules.",
+      );
+    }
+
+    // Validate value is non-negative
+    if (params.value !== undefined && params.value < 0n) {
+      throw new ExecutionError("Transaction value cannot be negative.");
+    }
+
+    // Validate calldata format if provided
+    if (params.data && params.data !== "0x" && !isHex(params.data)) {
+      throw new ExecutionError(
+        `Invalid calldata: "${params.data}". Expected a 0x-prefixed hex string.`,
+      );
+    }
   }
 
   private getWalletClient(walletAddress: Address): Erc7579SmartAccountClient {

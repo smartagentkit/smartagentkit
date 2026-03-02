@@ -79,8 +79,10 @@ async function runMockDemo() {
   const recipientA = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
   const recipientB = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
   const recipientC = "0xcccccccccccccccccccccccccccccccccccccccc" as Address;
-  const ownerAddr = "0x1234567890abcdef1234567890abcdef12345678" as Address;
+  // WARNING: Well-known Foundry test key — never use with real funds
   const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
+  // Address derived from the Foundry test key above
+  const ownerAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 
   // Create mock client
   const mockClient = new MockSmartAgentKitClient({

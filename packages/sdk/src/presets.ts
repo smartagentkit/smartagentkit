@@ -1,6 +1,45 @@
-import { parseEther, type Address } from "viem";
+import { parseEther, isAddress, type Address } from "viem";
 import type { PolicyConfig, PresetName } from "./types.js";
 import { NATIVE_TOKEN, WINDOW_1_DAY, WINDOW_1_WEEK } from "./constants.js";
+import { PolicyConfigError } from "./errors.js";
+
+/**
+ * Validate preset parameters at runtime.
+ * Throws PolicyConfigError if a parameter has the wrong type.
+ */
+function validatePresetParams(
+  presetName: string,
+  params: Record<string, unknown>,
+  spec: Record<string, string>,
+): void {
+  for (const [key, expectedType] of Object.entries(spec)) {
+    if (params[key] === undefined) continue;
+    const value = params[key];
+    switch (expectedType) {
+      case "bigint":
+        if (typeof value !== "bigint") {
+          throw new PolicyConfigError(
+            `Preset "${presetName}": parameter "${key}" must be a bigint, got ${typeof value}`,
+          );
+        }
+        break;
+      case "Address":
+        if (typeof value !== "string" || !isAddress(value)) {
+          throw new PolicyConfigError(
+            `Preset "${presetName}": parameter "${key}" must be a valid Ethereum address`,
+          );
+        }
+        break;
+      case "Address[]":
+        if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && isAddress(v))) {
+          throw new PolicyConfigError(
+            `Preset "${presetName}": parameter "${key}" must be an array of valid Ethereum addresses`,
+          );
+        }
+        break;
+    }
+  }
+}
 
 /**
  * Pre-built policy combinations for common agent types.
@@ -18,7 +57,13 @@ export const PRESETS: Record<
    *   - Allowlist of approved DEX contracts
    *   - Emergency pause with owner as guardian
    */
-  "defi-trader": (owner, params = {}) => [
+  "defi-trader": (owner, params = {}) => {
+    validatePresetParams("defi-trader", params, {
+      dailyEthLimit: "bigint",
+      guardian: "Address",
+      allowedDexes: "Address[]",
+    });
+    return [
     {
       type: "spending-limit",
       limits: [
@@ -43,7 +88,9 @@ export const PRESETS: Record<
             mode: "allow" as const,
             targets: (params.allowedDexes as Address[]).map((addr) => ({
               address: addr,
-              selector: "0x00000000" as `0x${string}`,
+              // Omit selector to use the wildcard (0x431e2cf5) — allows all
+              // function calls, not just ETH transfers. 0x00000000 is NOT a
+              // wildcard; it only matches empty calldata.
             })),
           },
         ]
@@ -53,14 +100,20 @@ export const PRESETS: Record<
       guardian: (params.guardian as Address) ?? owner,
       autoUnpauseAfter: WINDOW_1_DAY,
     },
-  ],
+  ];
+  },
 
   /**
    * Treasury Agent preset:
    *   - Lower spending limits with longer windows
    *   - Emergency pause (manual only)
    */
-  "treasury-agent": (owner, params = {}) => [
+  "treasury-agent": (owner, params = {}) => {
+    validatePresetParams("treasury-agent", params, {
+      weeklyEthLimit: "bigint",
+      guardian: "Address",
+    });
+    return [
     {
       type: "spending-limit",
       limits: [
@@ -76,7 +129,8 @@ export const PRESETS: Record<
       guardian: (params.guardian as Address) ?? owner,
       autoUnpauseAfter: 0,
     },
-  ],
+  ];
+  },
 
   /**
    * Payment Agent preset:
@@ -84,7 +138,13 @@ export const PRESETS: Record<
    *   - Allowlist of approved recipients only
    *   - Emergency pause
    */
-  "payment-agent": (owner, params = {}) => [
+  "payment-agent": (owner, params = {}) => {
+    validatePresetParams("payment-agent", params, {
+      dailyLimit: "bigint",
+      guardian: "Address",
+      approvedRecipients: "Address[]",
+    });
+    return [
     {
       type: "spending-limit",
       limits: [
@@ -115,18 +175,24 @@ export const PRESETS: Record<
       guardian: (params.guardian as Address) ?? owner,
       autoUnpauseAfter: 3_600,
     },
-  ],
+  ];
+  },
 
   /**
    * Minimal preset:
    *   - Just emergency pause
    *   - For agents that need maximum flexibility with a kill switch
    */
-  minimal: (owner, params = {}) => [
+  minimal: (owner, params = {}) => {
+    validatePresetParams("minimal", params, {
+      guardian: "Address",
+    });
+    return [
     {
       type: "emergency-pause",
       guardian: (params.guardian as Address) ?? owner,
       autoUnpauseAfter: 0,
     },
-  ],
+  ];
+  },
 };

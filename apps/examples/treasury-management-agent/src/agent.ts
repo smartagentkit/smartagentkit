@@ -42,8 +42,10 @@ async function runMockDemo() {
   console.log("Treasury Management Agent (MOCK MODE)");
   console.log("======================================\n");
 
-  const ownerAddr = "0x1234567890abcdef1234567890abcdef12345678" as Address;
+  // WARNING: Well-known Foundry test key — never use with real funds
   const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
+  // Address derived from the Foundry test key above
+  const ownerAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 
   // Mock USDC address (mainnet address for symbol resolution)
   const mockUSDC = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" as Address;

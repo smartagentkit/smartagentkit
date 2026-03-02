@@ -83,22 +83,8 @@ sessionCommand
       success("Session key created!");
       console.log();
 
-      // Warn about sensitive key material
-      console.log(
-        chalk.yellow(
-          "  WARNING: The private key below grants transaction signing access.",
-        ),
-      );
-      console.log(
-        chalk.yellow(
-          "  Store it securely and never share it publicly.",
-        ),
-      );
-      console.log();
-
       printKeyValue([
         ["Session Key", result.sessionKey],
-        ["Private Key", result.privateKey],
         ["Permission ID", result.permissionId],
         [
           "Expires",
@@ -107,7 +93,8 @@ sessionCommand
       ]);
       console.log();
       info(
-        "Save the private key securely — the agent needs it to sign transactions.",
+        "The session key address is shown above. Manage key material " +
+          "externally via a secure key management system.",
       );
     } catch (err) {
       spinner.stop();
@@ -147,7 +134,6 @@ sessionCommand
 
       const table = createTable([
         "Session Key",
-        "Permission ID",
         "Expires",
         "Actions",
       ]);
@@ -160,8 +146,7 @@ sessionCommand
             : chalk.red("Expired");
 
         table.push([
-          `${s.sessionKeyAddress.slice(0, 10)}...`,
-          `${s.permissionId.slice(0, 10)}...`,
+          `${s.sessionKey.slice(0, 10)}...`,
           expiresStr,
           s.actions.length.toString(),
         ]);

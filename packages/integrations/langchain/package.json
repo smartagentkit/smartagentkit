@@ -1,6 +1,6 @@
 {
   "name": "@smartagentkit/langchain",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "LangChain integration for SmartAgentKit — AI agent smart wallet tools",
   "license": "MIT",
   "author": "SmartAgentKit Contributors",
@@ -33,8 +33,12 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist"],
-  "publishConfig": { "access": "public" },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "pnpm build",
@@ -45,6 +49,7 @@
   },
   "dependencies": {
     "@smartagentkit/sdk": "workspace:*",
+    "viem": "^2.46.0",
     "zod": "^3.24.0"
   },
   "peerDependencies": {

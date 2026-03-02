@@ -1,4 +1,5 @@
 import { parseEther, type Address, type Hex, type Chain } from "viem";
+import { privateKeyToAccount, mnemonicToAccount } from "viem/accounts";
 import type {
   AgentWallet,
   CreateWalletParams,
@@ -195,16 +196,18 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
 
   // ─── Guardian Actions ─────────────────────────────────────────
 
-  async pause(walletAddress: Address, _guardianKey: SignerKey): Promise<Hex> {
+  async pause(walletAddress: Address, guardianKey: SignerKey): Promise<Hex> {
     const state = this.getState(walletAddress);
+    this.enforceGuardianAuth(state, guardianKey);
     state.paused = true;
     const txHash = this.fakeTxHash();
     this.addLog("pause", { address: walletAddress, txHash });
     return txHash;
   }
 
-  async unpause(walletAddress: Address, _guardianKey: SignerKey): Promise<Hex> {
+  async unpause(walletAddress: Address, guardianKey: SignerKey): Promise<Hex> {
     const state = this.getState(walletAddress);
+    this.enforceGuardianAuth(state, guardianKey);
     state.paused = false;
     const txHash = this.fakeTxHash();
     this.addLog("unpause", { address: walletAddress, txHash });
@@ -217,11 +220,10 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
     wallet: AgentWallet,
     params: CreateSessionParams,
     _ownerKey: SignerKey,
-  ): Promise<{ sessionKey: Address; privateKey: Hex; permissionId: Hex }> {
+  ): Promise<{ sessionKey: Address; permissionId: Hex }> {
     const state = this.getState(wallet.address);
 
     const sessionKey = deterministicAddress(Date.now() % 100000);
-    const privateKey = `0x${"ab".repeat(32)}` as Hex;
     const permissionId = `0x${"cd".repeat(32)}` as Hex;
 
     const session: ActiveSession = {
@@ -238,7 +240,7 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
       expiresAt: params.expiresAt,
     });
 
-    return { sessionKey, privateKey, permissionId };
+    return { sessionKey, permissionId };
   }
 
   async revokeSession(
@@ -301,6 +303,21 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
   private enforceNotPaused(state: MockWalletState): void {
     if (state.paused) {
       throw new WalletPausedError(state.address);
+    }
+  }
+
+  private enforceGuardianAuth(state: MockWalletState, guardianKey: SignerKey): void {
+    if (!state.guardian) return; // No guardian configured — allow
+    // Resolve the key to an address and check against configured guardian
+    const guardianAccount =
+      typeof guardianKey === "string"
+        ? privateKeyToAccount(guardianKey as Hex)
+        : mnemonicToAccount(guardianKey.mnemonic, { addressIndex: guardianKey.addressIndex ?? 0 });
+    if (guardianAccount.address.toLowerCase() !== state.guardian.toLowerCase()) {
+      throw new ExecutionError(
+        `Guardian key mismatch: expected guardian ${state.guardian}, ` +
+          `got ${guardianAccount.address}`,
+      );
     }
   }
 

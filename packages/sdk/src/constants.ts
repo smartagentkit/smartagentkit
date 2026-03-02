@@ -33,6 +33,10 @@ export const SAFE_7579_LAUNCHPAD: Address =
 export const RHINESTONE_ATTESTER: Address =
   "0x000000333034E9f539ce08819E12c1b8Cb29084d";
 
+/** Smart Sessions Validator (Rhinestone + Biconomy) */
+export const SMART_SESSIONS_VALIDATOR: Address =
+  "0x00000000002B0eCfbD0496EE71e01257dA0E37DE";
+
 /** Attesters threshold for module installation */
 export const ATTESTERS_THRESHOLD = 1;
 
@@ -189,6 +193,17 @@ export const HOOK_TYPE_TARGET = 4;
 export const MODULE_ONINSTALL_ABI = [
   {
     name: "onInstall",
+    type: "function",
+    inputs: [{ name: "data", type: "bytes" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
+/** ERC-7579 onUninstall ABI (common to all modules) */
+export const MODULE_ONUNINSTALL_ABI = [
+  {
+    name: "onUninstall",
     type: "function",
     inputs: [{ name: "data", type: "bytes" }],
     outputs: [],

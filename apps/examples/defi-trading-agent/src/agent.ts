@@ -57,12 +57,16 @@ async function runMockDemo() {
 
   // 2. Create wallet with defi-trader preset
   console.log("2. Creating agent wallet with defi-trader preset...");
+  // WARNING: Well-known Foundry test key — never use with real funds
+  const mockOwnerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
+  const mockOwnerAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
+
   const wallet = await mockClient.createWallet({
-    owner: "0x1234567890abcdef1234567890abcdef12345678" as Address,
-    ownerPrivateKey: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex,
+    owner: mockOwnerAddr,
+    ownerPrivateKey: mockOwnerKey,
     preset: "defi-trader",
     presetParams: {
-      guardian: "0x1234567890abcdef1234567890abcdef12345678" as Address,
+      guardian: mockOwnerAddr,
     },
   });
   console.log(`   Wallet address: ${wallet.address}`);
@@ -155,7 +159,7 @@ async function runRealAgent() {
 
   // 3. Create session key for the agent
   console.log("3. Creating session key for agent...");
-  const { sessionKey, privateKey: sessionPrivateKey, permissionId } =
+  const { sessionKey, permissionId } =
     await sakClient.createSession(
       wallet,
       {
@@ -170,7 +174,7 @@ async function runRealAgent() {
       },
       config.ownerPrivateKey,
     );
-  console.log(`   Session key: ${sessionKey}`);
+  console.log(`   Session key: ${sessionKey.slice(0, 10)}...${sessionKey.slice(-4)}`);
   console.log(`   Permission ID: ${permissionId}`);
   console.log();
 
@@ -179,7 +183,6 @@ async function runRealAgent() {
   const tools = createSmartAgentKitTools(
     sakClient,
     wallet.address,
-    sessionPrivateKey,
   );
   console.log(`   ${tools.length} tools available: ${tools.map((t) => t.name).join(", ")}`);
   console.log();

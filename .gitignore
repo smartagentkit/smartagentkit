@@ -12,7 +12,7 @@ dist/
 # Foundry
 packages/contracts/out/
 packages/contracts/cache/
-packages/contracts/lib/
+packages/contracts/broadcast/
 
 # Environment
 .env
@@ -28,6 +28,10 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# VitePress
+apps/docs/.vitepress/cache/
+apps/docs/.vitepress/dist/
 
 # Coverage
 coverage/
