@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.4
+
+### Patch Changes
+
+- fix(sdk): two-phase HMP deployment to fix Safe7579 hook initialization,ci: auto-generate changesets and enforce on PRs
+
 ## 0.1.3
 
 ### Patch Changes
