@@ -53,17 +53,17 @@ export function saveConfig(config: CliConfig): void {
 
 export function getConfigValue(key: string): string | undefined {
   const config = loadConfig();
-  return (config as Record<string, unknown>)[key] as string | undefined;
+  return (config as unknown as Record<string, unknown>)[key] as string | undefined;
 }
 
 export function setConfigValue(key: string, value: string): void {
   const config = loadConfig();
-  (config as Record<string, unknown>)[key] = value;
+  (config as unknown as Record<string, unknown>)[key] = value;
   saveConfig(config);
 }
 
 export function deleteConfigValue(key: string): void {
   const config = loadConfig();
-  delete (config as Record<string, unknown>)[key];
+  delete (config as unknown as Record<string, unknown>)[key];
   saveConfig(config);
 }

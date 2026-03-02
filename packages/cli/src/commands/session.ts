@@ -147,7 +147,6 @@ sessionCommand
 
       const table = createTable([
         "Session Key",
-        "Permission ID",
         "Expires",
         "Actions",
       ]);
@@ -160,8 +159,7 @@ sessionCommand
             : chalk.red("Expired");
 
         table.push([
-          `${s.sessionKeyAddress.slice(0, 10)}...`,
-          `${s.permissionId.slice(0, 10)}...`,
+          `${s.sessionKey.slice(0, 10)}...`,
           expiresStr,
           s.actions.length.toString(),
         ]);

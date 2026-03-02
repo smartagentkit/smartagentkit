@@ -35,7 +35,7 @@ configCommand
     if (key.includes(".")) {
       const parts = key.split(".");
       const config = loadConfig();
-      let obj = config as Record<string, unknown>;
+      let obj = config as unknown as Record<string, unknown>;
       for (let i = 0; i < parts.length - 1; i++) {
         if (!obj[parts[i]] || typeof obj[parts[i]] !== "object") {
           obj[parts[i]] = {};
@@ -58,7 +58,7 @@ configCommand
     if (key.includes(".")) {
       const parts = key.split(".");
       const config = loadConfig();
-      let obj = config as Record<string, unknown>;
+      let obj = config as unknown as Record<string, unknown>;
       for (let i = 0; i < parts.length - 1; i++) {
         if (!obj[parts[i]] || typeof obj[parts[i]] !== "object") {
           // Path doesn't exist, nothing to delete

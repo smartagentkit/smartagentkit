@@ -62,8 +62,7 @@ export const statusCommand = new Command("status")
               ? `${Math.floor(expiresIn / 3600)}h ${Math.floor((expiresIn % 3600) / 60)}m`
               : chalk.red("Expired");
           printKeyValue([
-            ["  Session Key", s.sessionKeyAddress],
-            ["  Permission ID", s.permissionId],
+            ["  Session Key", s.sessionKey],
             ["  Expires In", expiresStr],
           ]);
         }
