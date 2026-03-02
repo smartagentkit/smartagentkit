@@ -25,9 +25,13 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "docs:dev": "pnpm --filter @smartagentkit/docs dev",
     "docs:build": "pnpm --filter @smartagentkit/docs build",
-    "docs:preview": "pnpm --filter @smartagentkit/docs preview"
+    "docs:preview": "pnpm --filter @smartagentkit/docs preview",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.29.0",
     "turbo": "^2.5.0",
     "typescript": "^5.7.0",
     "prettier": "^3.5.0"
