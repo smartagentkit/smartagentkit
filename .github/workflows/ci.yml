@@ -75,6 +75,49 @@ jobs:
             timeout 60 pnpm --filter "$example" start:mock || exit 1
           done
 
+  changeset-check:
+    name: Changeset Check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check for changeset
+        run: |
+          # Check if any publishable package source files changed
+          CHANGED=$(git diff --name-only origin/main...HEAD -- \
+            packages/sdk/src packages/cli/src \
+            packages/integrations/langchain/src packages/testing/src)
+          if [ -n "$CHANGED" ]; then
+            # Packages changed — require a changeset
+            CHANGESETS=$(ls .changeset/*.md 2>/dev/null | grep -v README.md || true)
+            if [ -z "$CHANGESETS" ]; then
+              echo "::error::Package source files changed but no changeset found."
+              echo "Run 'pnpm changeset' to create one, or add a .changeset/*.md file."
+              echo ""
+              echo "Changed files:"
+              echo "$CHANGED"
+              exit 1
+            fi
+            echo "Changeset found. OK."
+          else
+            echo "No publishable package changes detected. Changeset not required."
+          fi
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
