@@ -1,6 +1,7 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { ISmartAgentKitClient } from "@smartagentkit/sdk";
+import { formatEther } from "viem";
 
 // Reusable Zod pattern for 0x-prefixed Ethereum addresses (20 bytes)
 const addressSchema = z
@@ -32,6 +33,11 @@ const calldataSchema = z
  * @param client - An initialized SmartAgentKitClient
  * @param walletAddress - The smart wallet address to operate on
  * @param sessionKey - Optional session key private key for signing transactions
+ * @param options - Optional configuration
+ * @param options.confirmBeforeExecute - Async callback invoked before executing any
+ *   transaction (send_transaction or send_batch_transaction). Receives the transaction
+ *   parameters and must return `true` to proceed or `false` to reject the transaction.
+ *   Useful for adding human-in-the-loop approval, logging, or rate-limiting.
  * @returns Array of DynamicStructuredTool instances for use with LangChain agents
  *
  * @example
@@ -39,7 +45,12 @@ const calldataSchema = z
  * import { createSmartAgentKitTools } from "@smartagentkit/langchain";
  * import { createReactAgent } from "@langchain/langgraph/prebuilt";
  *
- * const tools = createSmartAgentKitTools(client, wallet.address, sessionKey);
+ * const tools = createSmartAgentKitTools(client, wallet.address, sessionKey, {
+ *   confirmBeforeExecute: async ({ target, value, data }) => {
+ *     console.log(`Transaction to ${target} for ${value ?? "0"} wei`);
+ *     return true; // or false to reject
+ *   },
+ * });
  * const agent = createReactAgent({ llm: chatModel, tools });
  * ```
  */
@@ -47,6 +58,13 @@ export function createSmartAgentKitTools(
   client: ISmartAgentKitClient,
   walletAddress: string,
   sessionKey?: string,
+  options?: {
+    confirmBeforeExecute?: (params: {
+      target: string;
+      value?: string;
+      data?: string;
+    }) => Promise<boolean>;
+  },
 ): DynamicStructuredTool[] {
   const address = walletAddress as `0x${string}`;
 
@@ -63,12 +81,12 @@ export function createSmartAgentKitTools(
     func: async () => {
       try {
         const balances = await client.getBalances(address);
-        // Note: Division by 1e18 assumes 18 decimals (correct for native ETH).
+        // formatEther handles the full 256-bit range without precision loss.
         // For ERC-20 tokens, use the raw wei value and the token's actual decimals.
-        const ethBalance = Number(balances.eth) / 1e18;
+        const ethBalance = formatEther(balances.eth);
         return JSON.stringify({
           wallet: walletAddress,
-          eth: ethBalance.toString(),
+          eth: ethBalance,
           ethWei: balances.eth.toString(),
         });
       } catch (error) {
@@ -87,7 +105,9 @@ export function createSmartAgentKitTools(
       "Check how much spending allowance remains for a token on the wallet. " +
       "The wallet has policy-enforced spending limits per token per time window. " +
       "Use this to verify you can spend a certain amount before sending a transaction. " +
-      'Use "0x0000000000000000000000000000000000000000" for native ETH.',
+      'Use "0x0000000000000000000000000000000000000000" for native ETH. ' +
+      "The 'remaining' field assumes 18 decimals (ETH). For non-ETH tokens, use " +
+      "the 'remainingWei' field and divide by the token's actual decimals.",
     schema: z.object({
       token: addressSchema.describe(
         "Token contract address. Use 0x0000000000000000000000000000000000000000 for native ETH.",
@@ -99,15 +119,15 @@ export function createSmartAgentKitTools(
           address,
           token as `0x${string}`,
         );
-        // Note: Division by 1e18 assumes 18 decimals (correct for native ETH).
+        // formatEther handles the full 256-bit range without precision loss.
         // For tokens with different decimals (e.g., USDC = 6), use remainingWei
         // and divide by the token's actual decimal factor.
-        const remainingEth = Number(remaining) / 1e18;
+        const remainingFormatted = formatEther(remaining);
         return JSON.stringify({
           wallet: walletAddress,
           token,
           remainingWei: remaining.toString(),
-          remaining: remainingEth.toString(),
+          remaining: remainingFormatted,
         });
       } catch (error) {
         return JSON.stringify({
@@ -144,6 +164,21 @@ export function createSmartAgentKitTools(
     }),
     func: async ({ target, value, data }) => {
       try {
+        // Invoke the confirmation callback if provided
+        if (options?.confirmBeforeExecute) {
+          const confirmed = await options.confirmBeforeExecute({
+            target,
+            value,
+            data,
+          });
+          if (!confirmed) {
+            return JSON.stringify({
+              success: false,
+              error: "Transaction rejected by confirmation callback",
+            });
+          }
+        }
+
         const wallet = {
           address,
           owner: address, // Resolved from connected wallet
@@ -202,6 +237,23 @@ export function createSmartAgentKitTools(
     }),
     func: async ({ calls }) => {
       try {
+        // Invoke the confirmation callback for each call if provided
+        if (options?.confirmBeforeExecute) {
+          for (const call of calls) {
+            const confirmed = await options.confirmBeforeExecute({
+              target: call.target,
+              value: call.value,
+              data: call.data,
+            });
+            if (!confirmed) {
+              return JSON.stringify({
+                success: false,
+                error: "Transaction rejected by confirmation callback",
+              });
+            }
+          }
+        }
+
         const wallet = {
           address,
           owner: address,

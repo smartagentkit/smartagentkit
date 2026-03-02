@@ -25,8 +25,10 @@ async function runMockDemo() {
   console.log("Monitoring Alert Agent (MOCK MODE)");
   console.log("===================================\n");
 
-  const ownerAddr = "0x1234567890abcdef1234567890abcdef12345678" as Address;
+  // WARNING: Well-known Foundry test key — never use with real funds
   const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
+  // Address derived from the Foundry test key above
+  const ownerAddr = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
   const spendingLimit = parseEther("1");
 
   // Create mock client with two wallets

@@ -6,6 +6,7 @@ import {
   getConfigPath,
   setConfigValue,
   deleteConfigValue,
+  validateConfigKey,
 } from "../utils/config.js";
 import { listChains } from "../utils/chains.js";
 import { success, error, info, printKeyValue } from "../utils/display.js";
@@ -31,6 +32,13 @@ configCommand
   .argument("<key>", "Config key (e.g., rpcUrl, defaultChain)")
   .argument("<value>", "Config value")
   .action((key: string, value: string) => {
+    // Validate key against allowlist and reject prototype pollution attempts
+    const validationError = validateConfigKey(key);
+    if (validationError) {
+      error(validationError);
+      return;
+    }
+
     // Handle nested keys like moduleAddresses.spendingLimitHook
     if (key.includes(".")) {
       const parts = key.split(".");
@@ -55,6 +63,13 @@ configCommand
   .description("Delete a configuration value")
   .argument("<key>", "Config key to delete (supports dot-notation, e.g. moduleAddresses.spendingLimitHook)")
   .action((key: string) => {
+    // Validate key against allowlist and reject prototype pollution attempts
+    const validationError = validateConfigKey(key);
+    if (validationError) {
+      error(validationError);
+      return;
+    }
+
     if (key.includes(".")) {
       const parts = key.split(".");
       const config = loadConfig();

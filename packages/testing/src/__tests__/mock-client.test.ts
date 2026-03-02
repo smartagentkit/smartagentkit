@@ -7,8 +7,10 @@ import {
   ExecutionError,
 } from "@smartagentkit/sdk";
 
-const OWNER = "0x1234567890abcdef1234567890abcdef12345678" as Address;
+// WARNING: Well-known Foundry test key — never use with real funds
 const OWNER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
+// Address derived from the Foundry test key above
+const OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 const NATIVE_TOKEN = "0x0000000000000000000000000000000000000000" as Address;
 const RECIPIENT_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as Address;
 const RECIPIENT_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" as Address;
