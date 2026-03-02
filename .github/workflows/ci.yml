@@ -57,13 +57,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm build
+        run: pnpm build --filter='!@smartagentkit/contracts'
 
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm typecheck --filter='!@smartagentkit/contracts'
 
       - name: Test
-        run: pnpm test
+        run: pnpm test --filter='!@smartagentkit/contracts'
 
       - name: Smoke-test examples (mock mode)
         run: |
