@@ -1,6 +1,6 @@
 {
   "name": "arbitrage-agent-example",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Example: DEX arbitrage bot with session keys and atomic batch execution",
   "type": "module",
