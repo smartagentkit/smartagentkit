@@ -5,7 +5,7 @@
   "fixed": [
     [
       "@smartagentkit/sdk",
-      "smartagentkit",
+      "@smartagentkit/cli",
       "@smartagentkit/langchain",
       "@smartagentkit/testing"
     ]
