@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import { ERC7579HookBase } from "modulekit/module-bases/ERC7579HookBase.sol";
+import { ERC7579HookDestruct } from "modulekit/module-bases/ERC7579HookDestruct.sol";
+import { Execution } from "modulekit/accounts/common/interfaces/IERC7579Account.sol";
 
 /**
  * @title EmergencyPauseHook
  * @notice ERC-7579 Hook providing emergency pause capability for agent wallets.
  *         When paused, ALL agent transactions are blocked.
  *
- * @dev Uses ERC7579HookBase (not HookDestruct) since we don't need to
- *      inspect execution parameters — we simply block everything when paused.
+ * @dev Uses ERC7579HookDestruct to inspect execution targets and enforce
+ *      self-call protection. This prevents agents from calling admin functions
+ *      (setGuardian, setAutoUnpauseTimeout) or inherited functions
+ *      (setTrustedForwarder, clearTrustedForwarder) via UserOps.
  *
  *      Registered as a sub-hook within the HookMultiPlexer.
  *
@@ -18,25 +21,18 @@ import { ERC7579HookBase } from "modulekit/module-bases/ERC7579HookBase.sol";
  *      - Optional auto-unpause after configurable timeout
  *      - Guardian rotation (works even while paused)
  *      - Pause cooldown to prevent griefing
- *      - Minimal code surface for security
+ *      - Self-call, delegatecall, and module management blocking
  *
  *      OWNER RECONFIGURATION: Admin functions (setGuardian, setAutoUnpauseTimeout)
- *      cannot be called through UserOps because AllowlistHook's protected addresses
- *      mechanism blocks calls to this hook's address. Owners must use Safe-native
- *      execTransaction to reconfigure module parameters.
- *
- *      SECURITY — Target inspection: This hook uses ERC7579HookBase (not HookDestruct)
- *      and does not inspect execution targets. Protection of this hook's admin functions
- *      (setGuardian, setAutoUnpauseTimeout) and inherited functions (setTrustedForwarder,
- *      clearTrustedForwarder) is enforced by AllowlistHook's protected addresses mechanism.
- *      AllowlistHook MUST include this hook's address in its protectedAddresses array.
- *      Do NOT deploy EmergencyPauseHook without AllowlistHook.
+ *      cannot be called through UserOps because self-call blocking prevents calls
+ *      to this hook's address. Owners must use Safe-native execTransaction to
+ *      reconfigure module parameters.
  *
  *      NOTE: HookMultiPlexer executes sub-hooks in ascending address order.
  *      This hook's execution order relative to SpendingLimitHook and
  *      AllowlistHook depends on their deployment addresses.
  */
-contract EmergencyPauseHook is ERC7579HookBase {
+contract EmergencyPauseHook is ERC7579HookDestruct {
     // ─── Types ───────────────────────────────────────────────────
 
     struct PauseConfig {
@@ -69,6 +65,10 @@ contract EmergencyPauseHook is ERC7579HookBase {
     error GuardianCannotBeZero();
     error PauseCooldownActive(uint48 availableAt);
     error AutoUnpauseTooLong(uint48 provided, uint48 maximum);
+    error SelfCallBlocked();
+    error DelegateCallNotAllowed();
+    error ModuleManagementBlocked();
+    error UnknownFunctionBlocked();
 
     // ─── Events ──────────────────────────────────────────────────
 
@@ -271,21 +271,137 @@ contract EmergencyPauseHook is ERC7579HookBase {
         emit AutoUnpauseTimeoutChanged(account, timeout);
     }
 
-    // ─── Hook Logic ──────────────────────────────────────────────
+    // ─── Hook Logic (ERC7579HookDestruct) ────────────────────────
 
     /**
-     * @dev Blocks ALL transactions when the account is paused.
-     *      If auto-unpause is configured and the timeout has elapsed, unpauses automatically.
+     * @dev Single execution: block self-calls, then check pause state.
      */
-    function _preCheck(
+    function onExecute(
         address account,
+        address, /* msgSender */
+        address target,
+        uint256, /* value */
+        bytes calldata /* callData */
+    ) internal override returns (bytes memory) {
+        if (target == address(this)) revert SelfCallBlocked();
+        _checkPauseState(account);
+        return "";
+    }
+
+    /**
+     * @dev Batch execution: block self-calls for each target, then check pause state.
+     */
+    function onExecuteBatch(
+        address account,
+        address, /* msgSender */
+        Execution[] calldata executions
+    ) internal override returns (bytes memory) {
+        for (uint256 i; i < executions.length; i++) {
+            if (executions[i].target == address(this)) revert SelfCallBlocked();
+        }
+        _checkPauseState(account);
+        return "";
+    }
+
+    /**
+     * @dev Single execution from executor: block self-calls, then check pause state.
+     */
+    function onExecuteFromExecutor(
+        address account,
+        address, /* msgSender */
+        address target,
+        uint256, /* value */
+        bytes calldata /* callData */
+    ) internal override returns (bytes memory) {
+        if (target == address(this)) revert SelfCallBlocked();
+        _checkPauseState(account);
+        return "";
+    }
+
+    /**
+     * @dev Batch execution from executor: block self-calls, then check pause state.
+     */
+    function onExecuteBatchFromExecutor(
+        address account,
+        address, /* msgSender */
+        Execution[] calldata executions
+    ) internal override returns (bytes memory) {
+        for (uint256 i; i < executions.length; i++) {
+            if (executions[i].target == address(this)) revert SelfCallBlocked();
+        }
+        _checkPauseState(account);
+        return "";
+    }
+
+    // ─── Delegatecall Blocking ───────────────────────────────────
+
+    /**
+     * @dev Delegatecall bypasses hook checks since target code runs
+     *      in the account's context. Always revert to prevent bypass.
+     */
+    function onExecuteDelegateCall(
+        address, /* account */
+        address, /* msgSender */
+        address, /* target */
+        bytes calldata /* callData */
+    ) internal pure override returns (bytes memory) {
+        revert DelegateCallNotAllowed();
+    }
+
+    function onExecuteDelegateCallFromExecutor(
+        address, /* account */
+        address, /* msgSender */
+        address, /* target */
+        bytes calldata /* callData */
+    ) internal pure override returns (bytes memory) {
+        revert DelegateCallNotAllowed();
+    }
+
+    // ─── Module Management Blocking ──────────────────────────────
+
+    /**
+     * @dev Block module installation/uninstallation through the hook to prevent
+     *      agents from modifying the security policy.
+     */
+    function onInstallModule(
+        address, /* account */
+        address, /* msgSender */
+        uint256, /* moduleType */
+        address, /* module */
+        bytes calldata /* initData */
+    ) internal pure override returns (bytes memory) {
+        revert ModuleManagementBlocked();
+    }
+
+    function onUninstallModule(
+        address, /* account */
+        address, /* msgSender */
+        uint256, /* moduleType */
+        address, /* module */
+        bytes calldata /* deInitData */
+    ) internal pure override returns (bytes memory) {
+        revert ModuleManagementBlocked();
+    }
+
+    function onUnknownFunction(
+        address, /* account */
         address, /* msgSender */
         uint256, /* msgValue */
         bytes calldata /* msgData */
-    ) internal override returns (bytes memory) {
+    ) internal pure override returns (bytes memory) {
+        revert UnknownFunctionBlocked();
+    }
+
+    // ─── Pause State Check ───────────────────────────────────────
+
+    /**
+     * @dev Shared pause check for all execution callbacks.
+     *      If auto-unpause is configured and the timeout has elapsed, unpauses automatically.
+     */
+    function _checkPauseState(address account) internal {
         PauseConfig storage cfg = pauseConfigs[account];
         if (!cfg.initialized) revert NotInitialized(account);
-        if (!cfg.paused) return ""; // Not paused — allow
+        if (!cfg.paused) return; // Not paused — allow
 
         // Check auto-unpause
         if (cfg.autoUnpauseAfter > 0) {
@@ -294,18 +410,11 @@ contract EmergencyPauseHook is ERC7579HookBase {
                 cfg.pausedAt = 0;
                 cfg.lastUnpausedAt = uint48(block.timestamp);
                 emit AutoUnpaused(account, uint48(block.timestamp));
-                return ""; // Auto-unpaused — allow
+                return; // Auto-unpaused — allow
             }
         }
 
         revert WalletPaused(account);
-    }
-
-    /**
-     * @dev No post-check needed for pause logic.
-     */
-    function _postCheck(address, bytes calldata) internal override {
-        // No-op
     }
 
     // ─── Query Functions ─────────────────────────────────────────

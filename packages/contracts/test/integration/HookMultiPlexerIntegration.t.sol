@@ -9,6 +9,7 @@ import {
     ModeCode,
     CALLTYPE_SINGLE,
     CALLTYPE_BATCH,
+    CALLTYPE_DELEGATECALL,
     EXECTYPE_DEFAULT,
     MODE_DEFAULT,
     ModePayload
@@ -344,6 +345,47 @@ contract HookMultiPlexerIntegrationTest is Test {
 
         vm.prank(account);
         vm.expectRevert(); // AllowlistHook blocks: ProtectedTargetBlocked
+        multiplexer.preCheck(sender, 0, msgData);
+    }
+
+    function test_crossModuleProtection_blocksSetTrustedForwarderOnEmergencyPause() public {
+        // Agent tries to call setTrustedForwarder on EmergencyPauseHook
+        bytes memory callData = abi.encodeWithSelector(
+            bytes4(keccak256("setTrustedForwarder(address)")),
+            address(0)
+        );
+        bytes memory msgData = _buildSingleExecMsgData(address(emergencyPause), 0, callData);
+
+        vm.prank(account);
+        vm.expectRevert(); // Blocked by AllowlistHook protectedTargets AND EmergencyPauseHook self-call blocking
+        multiplexer.preCheck(sender, 0, msgData);
+    }
+
+    function test_emergencyPause_blocksDelegatecall() public {
+        // Build a delegatecall mode execution
+        ModeCode mode = ModeLib.encode({
+            callType: CALLTYPE_DELEGATECALL,
+            execType: EXECTYPE_DEFAULT,
+            mode: MODE_DEFAULT,
+            payload: ModePayload.wrap(bytes22(0))
+        });
+        bytes memory execCalldata = ExecutionLib.encodeSingle(allowedTarget, 0, "");
+        bytes memory msgData = abi.encodeCall(IERC7579Account.execute, (mode, execCalldata));
+
+        vm.prank(account);
+        vm.expectRevert(); // At least one hook blocks delegatecall
+        multiplexer.preCheck(sender, 0, msgData);
+    }
+
+    function test_emergencyPause_blocksModuleManagement() public {
+        // Agent tries to install a malicious module
+        bytes memory msgData = abi.encodeCall(
+            IERC7579Account.installModule,
+            (1, makeAddr("maliciousValidator"), "")
+        );
+
+        vm.prank(account);
+        vm.expectRevert(); // Blocked by module management blocking in hooks
         multiplexer.preCheck(sender, 0, msgData);
     }
 }

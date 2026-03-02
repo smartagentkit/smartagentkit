@@ -256,21 +256,57 @@ contract AllowlistHook is ERC7579HookDestruct {
      * @dev Clears ALL existing permissions before switching mode.
      *      This prevents semantic inversion (allow entries becoming block entries).
      *      Re-add permissions after switching mode.
+     *
+     *      WARNING: After setMode completes, the permission list is empty. In BLOCKLIST mode
+     *      this means everything is allowed (except protected addresses). Use setModeWithPermissions
+     *      for atomic mode switch + permission setup.
      */
     function setMode(Mode mode) external {
         address account = msg.sender;
         if (!accountConfigs[account].initialized) revert NotInitialized(msg.sender);
         if (accountConfigs[account].mode == mode) revert AlreadyInMode();
 
-        // Clear all existing permissions to prevent semantic inversion
-        TargetPermission[] storage tracked = _trackedPermissions[account];
-        for (uint256 i; i < tracked.length; i++) {
-            delete permissions[account][tracked[i].target][tracked[i].selector];
-            delete _isPermissionTracked[account][tracked[i].target][tracked[i].selector];
-        }
-        delete _trackedPermissions[account];
+        _clearPermissions(account);
 
         accountConfigs[account].mode = mode;
+        emit ModeChanged(account, mode);
+    }
+
+    /**
+     * @notice Atomically switch mode and set new permissions.
+     * @dev Clears existing permissions, switches mode, and adds new permissions
+     *      in a single transaction. This prevents the intermediate state where
+     *      permissions are empty after setMode (which in BLOCKLIST mode would
+     *      allow everything except protected addresses).
+     * @param mode The new mode (ALLOWLIST or BLOCKLIST).
+     * @param newPermissions The permissions to apply after the mode switch.
+     */
+    function setModeWithPermissions(Mode mode, TargetPermission[] calldata newPermissions) external {
+        address account = msg.sender;
+        if (!accountConfigs[account].initialized) revert NotInitialized(msg.sender);
+        if (accountConfigs[account].mode == mode) revert AlreadyInMode();
+
+        // 1. Clear existing permissions
+        _clearPermissions(account);
+
+        // 2. Switch mode
+        accountConfigs[account].mode = mode;
+
+        // 3. Add new permissions atomically
+        for (uint256 i; i < newPermissions.length; i++) {
+            if (newPermissions[i].target == address(this) || _protectedTargets[account][newPermissions[i].target]) {
+                continue; // Skip protected/self targets
+            }
+            if (_trackedPermissions[account].length >= MAX_PERMISSIONS) {
+                revert TooManyPermissions(MAX_PERMISSIONS);
+            }
+            permissions[account][newPermissions[i].target][newPermissions[i].selector] = true;
+            if (!_isPermissionTracked[account][newPermissions[i].target][newPermissions[i].selector]) {
+                _trackedPermissions[account].push(newPermissions[i]);
+                _isPermissionTracked[account][newPermissions[i].target][newPermissions[i].selector] = true;
+            }
+        }
+
         emit ModeChanged(account, mode);
     }
 
@@ -425,6 +461,18 @@ contract AllowlistHook is ERC7579HookDestruct {
     }
 
     // ─── Internal Logic ──────────────────────────────────────────
+
+    /**
+     * @dev Clear all tracked permissions for an account.
+     */
+    function _clearPermissions(address account) internal {
+        TargetPermission[] storage tracked = _trackedPermissions[account];
+        for (uint256 i; i < tracked.length; i++) {
+            delete permissions[account][tracked[i].target][tracked[i].selector];
+            delete _isPermissionTracked[account][tracked[i].target][tracked[i].selector];
+        }
+        delete _trackedPermissions[account];
+    }
 
     /**
      * @dev Validates target/selector against the allowlist or blocklist.

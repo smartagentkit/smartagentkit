@@ -50,9 +50,9 @@ import {
   RHINESTONE_ATTESTER,
   ATTESTERS_THRESHOLD,
   HOOK_MULTIPLEXER_ADDRESS,
+  SMART_SESSIONS_VALIDATOR,
   HOOK_TYPE_GLOBAL,
   MODULE_ONINSTALL_ABI,
-  SET_TRUSTED_FORWARDER_ABI,
   HOOK_MULTIPLEXER_ABI,
   SPENDING_LIMIT_HOOK_ABI,
   EMERGENCY_PAUSE_HOOK_ABI,
@@ -506,8 +506,8 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * Hooks (spending limits, allowlist, pause) are enforced on-chain.
    */
   async execute(wallet: AgentWallet, params: ExecuteParams): Promise<Hex> {
-    // Pre-flight validation: block calls to infrastructure contracts
-    this.validateTransaction(params);
+    // Pre-flight validation: block calls to infrastructure contracts and self
+    this.validateTransaction(params, wallet.address);
 
     const client = this.getWalletClient(wallet.address);
 
@@ -540,9 +540,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     wallet: AgentWallet,
     params: ExecuteBatchParams,
   ): Promise<Hex> {
-    // Pre-flight validation: block calls to infrastructure contracts
+    // Pre-flight validation: block calls to infrastructure contracts and self
     for (const call of params.calls) {
-      this.validateTransaction(call);
+      this.validateTransaction(call, wallet.address);
     }
 
     const client = this.getWalletClient(wallet.address);
@@ -721,8 +721,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       if (moduleAddresses.automationExecutor) {
         infrastructureAddresses.push(moduleAddresses.automationExecutor);
       }
-      // Also protect the HookMultiPlexer itself
+      // Also protect the HookMultiPlexer and Smart Sessions Validator
       infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
+      infrastructureAddresses.push(SMART_SESSIONS_VALIDATOR);
 
       let hasAllowlist = false;
       for (const policy of policies) {
@@ -834,7 +835,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       switch (policy.type) {
         case "spending-limit": {
           const hookAddress = moduleAddresses.spendingLimitHook;
-          const initData = encodeSpendingLimitInitData(policy);
+          const initData = encodeSpendingLimitInitData(policy, hookMultiPlexerAddress);
           this.pushSubHookInitCalls(
             calls,
             hookAddress,
@@ -846,7 +847,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
         case "allowlist": {
           const hookAddress = moduleAddresses.allowlistHook;
-          const initData = encodeAllowlistInitData(policy);
+          const initData = encodeAllowlistInitData(policy, hookMultiPlexerAddress);
           this.pushSubHookInitCalls(
             calls,
             hookAddress,
@@ -858,7 +859,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
         case "emergency-pause": {
           const hookAddress = moduleAddresses.emergencyPauseHook;
-          const initData = encodeEmergencyPauseInitData(policy);
+          const initData = encodeEmergencyPauseInitData(policy, hookMultiPlexerAddress);
           this.pushSubHookInitCalls(
             calls,
             hookAddress,
@@ -884,10 +885,13 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   }
 
   /**
-   * Push the 3 calls needed to initialize a sub-hook:
-   * 1. onInstall(initData) on the sub-hook
-   * 2. setTrustedForwarder(multiplexer) on the sub-hook
-   * 3. addHook(hookAddr, GLOBAL) on the HookMultiPlexer
+   * Push the 2 calls needed to initialize a sub-hook:
+   * 1. onInstall(initData) on the sub-hook — sets trusted forwarder from init data
+   * 2. addHook(hookAddr, GLOBAL) on the HookMultiPlexer
+   *
+   * Note: The trusted forwarder is now set during onInstall via the encoded init data
+   * (passed as the first parameter). A separate setTrustedForwarder call is no longer
+   * needed, reducing gas cost and batch size.
    */
   private pushSubHookInitCalls(
     calls: { to: Address; value: bigint; data: Hex }[],
@@ -895,7 +899,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     initData: Hex,
     hookMultiPlexerAddress: Address,
   ): void {
-    // 1. Initialize the sub-hook for this account
+    // 1. Initialize the sub-hook for this account (sets trusted forwarder from init data)
     calls.push({
       to: hookAddress,
       value: 0n,
@@ -906,18 +910,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       }),
     });
 
-    // 2. Set HookMultiPlexer as trusted forwarder
-    calls.push({
-      to: hookAddress,
-      value: 0n,
-      data: encodeFunctionData({
-        abi: SET_TRUSTED_FORWARDER_ABI,
-        functionName: "setTrustedForwarder",
-        args: [hookMultiPlexerAddress],
-      }),
-    });
-
-    // 3. Register sub-hook as GLOBAL in the HookMultiPlexer
+    // 2. Register sub-hook as GLOBAL in the HookMultiPlexer
     calls.push({
       to: hookMultiPlexerAddress,
       value: 0n,
@@ -993,6 +986,8 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     // Protect Safe7579 infrastructure
     addresses.add(SAFE_7579_MODULE.toLowerCase());
     addresses.add(SAFE_7579_LAUNCHPAD.toLowerCase());
+    // Protect Smart Sessions Validator
+    addresses.add(SMART_SESSIONS_VALIDATOR.toLowerCase());
 
     // Protect all configured module addresses
     const moduleAddresses = this.config.moduleAddresses;
@@ -1021,7 +1016,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * @throws ExecutionError if the transaction targets a protected address
    *         or has invalid parameters.
    */
-  private validateTransaction(params: ExecuteParams): void {
+  private validateTransaction(params: ExecuteParams, walletAddress?: Address): void {
     // Validate target address format
     if (!isAddress(params.target)) {
       throw new ExecutionError(
@@ -1035,6 +1030,14 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       throw new ExecutionError(
         `Transaction blocked: target ${params.target} is a protected infrastructure contract. ` +
           "Agent wallets cannot call hook, multiplexer, or EntryPoint contracts directly.",
+      );
+    }
+
+    // Block self-calls: prevent the wallet from targeting itself to uninstall modules
+    if (walletAddress && params.target.toLowerCase() === walletAddress.toLowerCase()) {
+      throw new ExecutionError(
+        `Transaction blocked: target ${params.target} is the wallet's own address. ` +
+          "Self-calls could be used to uninstall security modules.",
       );
     }
 

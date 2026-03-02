@@ -10,15 +10,30 @@ practices for deploying SmartAgentKit-governed agent wallets.
 SmartAgentKit uses multiple layers of protection:
 
 1. **SDK-side transaction validation** — The SDK blocks calls to all known
-   infrastructure contracts (hooks, HookMultiPlexer, EntryPoint, Safe7579)
-   before submitting UserOperations.
+   infrastructure contracts (hooks, HookMultiPlexer, EntryPoint, Safe7579,
+   Smart Sessions Validator) before submitting UserOperations. It also blocks
+   self-calls (wallet targeting its own address) to prevent module uninstallation.
 
 2. **On-chain AllowlistHook `protectedAddresses`** — Infrastructure contract
-   addresses are automatically added to the AllowlistHook's protected addresses
-   list during wallet creation. This prevents agents from calling hook admin
-   functions even if the SDK-side check is bypassed.
+   addresses (including the Smart Sessions Validator) are automatically added to
+   the AllowlistHook's protected addresses list during wallet creation. This
+   prevents agents from calling hook admin functions even if the SDK-side check
+   is bypassed.
 
-3. **On-chain policy hooks** — SpendingLimitHook, AllowlistHook, and
+3. **On-chain self-call blocking** — All three hooks (SpendingLimitHook,
+   AllowlistHook, EmergencyPauseHook) use `ERC7579HookDestruct` to inspect
+   execution targets. Each hook blocks calls where `target == address(this)`,
+   preventing agents from calling admin functions or inherited
+   `setTrustedForwarder`/`clearTrustedForwarder` via UserOps.
+
+4. **On-chain delegatecall blocking** — All three hooks block delegatecall
+   execution to prevent target code from running in the account's context.
+
+5. **On-chain module management blocking** — All three hooks block
+   `installModule`/`uninstallModule` calls to prevent agents from modifying
+   the security policy.
+
+6. **On-chain policy hooks** — SpendingLimitHook, AllowlistHook, and
    EmergencyPauseHook each enforce independent constraints via the
    HookMultiPlexer.
 
@@ -57,16 +72,16 @@ The Rhinestone HookMultiPlexer's `removeHook` function does not verify
 AllowlistHook's `protectedAddresses`, blocking agent-initiated calls to
 `removeHook`. This has been reported upstream.
 
-### H-3: AllowlistHook Mode Switch Clears All Permissions
+### H-3: AllowlistHook Mode Switch Can Create Transient Window
 
 Calling `setMode()` on AllowlistHook clears all existing permissions before
-changing the mode. If switching from ALLOWLIST to BLOCKLIST mode:
-- The blocklist starts empty, meaning **all targets are allowed**
-- New block entries must be added in the same transaction batch
+changing the mode. If switching from ALLOWLIST to BLOCKLIST mode, the blocklist
+starts empty (meaning all targets are allowed except protected addresses).
 
-**Mitigation:** Always switch modes and add new permissions in a single
-batched UserOperation. Never switch to BLOCKLIST mode without simultaneously
-adding block entries.
+**Mitigation:** Use `setModeWithPermissions()` which atomically clears old
+permissions, sets the new mode, and adds new permissions in a single call. The
+standalone `setMode()` is retained for backwards compatibility but should be
+avoided in favor of the atomic version.
 
 ### H-4: AutomationExecutor Tasks Can Target Any Address
 
@@ -80,21 +95,19 @@ protection. Ensure all hook and multiplexer addresses are included.
 
 ---
 
-## EmergencyPauseHook: AllowlistHook Dependency
+## EmergencyPauseHook: Full Protection via ERC7579HookDestruct
 
-EmergencyPauseHook uses `ERC7579HookBase` (not `ERC7579HookDestruct`) and
-does **not** inspect execution targets. Its admin functions (`setGuardian`,
-`setAutoUnpauseTimeout`) and inherited functions (`setTrustedForwarder`,
-`clearTrustedForwarder`) are protected **only** by:
+EmergencyPauseHook uses `ERC7579HookDestruct` and inspects execution targets.
+It provides the same protections as SpendingLimitHook and AllowlistHook:
 
-1. The SDK-side transaction target blocklist
-2. AllowlistHook's `protectedAddresses` mechanism
+- **Self-call blocking:** Calls targeting the hook's own address are reverted.
+- **Delegatecall blocking:** All delegatecall execution types are reverted.
+- **Module management blocking:** `installModule`/`uninstallModule` are reverted.
+- **Unknown function blocking:** Unrecognized function selectors are reverted.
 
-**The SDK automatically ensures both layers are active.** When creating a
-wallet with any hooks but no explicit AllowlistHook, the SDK injects an
-AllowlistHook in blocklist mode with all infrastructure addresses protected.
-
-**NEVER deploy EmergencyPauseHook without AllowlistHook.**
+Admin functions (`setGuardian`, `setAutoUnpauseTimeout`) are callable by the
+account only via Safe-native `execTransaction` (not through UserOps, which
+are blocked by the hook pipeline).
 
 ### H-5: `EXECTYPE_TRY` Phantom Spending in SpendingLimitHook
 
@@ -148,6 +161,22 @@ automatically adds infrastructure addresses as protected regardless of mode.
 
 ## On-Chain Design Considerations
 
+### TrustedForwarder Admin Functions
+
+The `setTrustedForwarder()` and `clearTrustedForwarder()` functions are
+inherited from ModuleKit's `TrustedForwarder` base contract and are not
+`virtual` (cannot be overridden). These functions use `msg.sender` as the
+account, meaning only the smart account itself can change its own trusted
+forwarder. Protection is provided by:
+
+1. Each hook's self-call blocking (`target == address(this)` → revert)
+2. AllowlistHook's `protectedAddresses` mechanism
+3. SDK-side transaction target blocklist
+
+Trusted forwarders are set during `onInstall()` via the encoded init data. The
+SDK passes the HookMultiPlexer address directly in the init data, eliminating
+the need for a separate `setTrustedForwarder()` call.
+
 ### AutomationExecutor Task Target Validation
 
 The AutomationExecutor validates that task targets are non-zero but does not
@@ -170,9 +199,9 @@ collision exists in standard ERC-20/DeFi contracts.
 
 ### No `postCheck` Implementation
 
-SpendingLimitHook and AllowlistHook do not override `onPostCheck`. There is no
-post-execution verification of state changes. All validation occurs in
-`preCheck`.
+SpendingLimitHook, AllowlistHook, and EmergencyPauseHook do not override
+`onPostCheck`. There is no post-execution verification of state changes. All
+validation occurs in `preCheck`.
 
 ### Capacity Limits
 

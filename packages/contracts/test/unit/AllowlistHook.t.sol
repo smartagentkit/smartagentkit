@@ -1215,4 +1215,122 @@ contract AllowlistHookTest is Test {
         // address(0) should NOT be registered as protected
         assertFalse(hook.isProtectedTarget(account, address(0)));
     }
+
+    // ─── SC-4: setModeWithPermissions (Atomic Mode Switch) ──────
+
+    function test_setModeWithPermissions_switchesToBlocklistWithPermissions() public {
+        // Start in ALLOWLIST mode with targetA allowed
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installAllowlist(perms);
+
+        // Switch to BLOCKLIST with targetB blocked
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](1);
+        newPerms[0] = AllowlistHook.TargetPermission({ target: targetB, selector: WILDCARD });
+
+        vm.prank(account);
+        hook.setModeWithPermissions(AllowlistHook.Mode.BLOCKLIST, newPerms);
+
+        // Old allowlist permission should be cleared
+        assertFalse(hook.permissions(account, targetA, WILDCARD));
+        // New blocklist permission should exist
+        assertTrue(hook.permissions(account, targetB, WILDCARD));
+        // targetA should now be allowed (not in blocklist)
+        assertTrue(hook.isTargetAllowed(account, targetA, TRANSFER_SELECTOR));
+        // targetB should now be blocked
+        assertFalse(hook.isTargetAllowed(account, targetB, TRANSFER_SELECTOR));
+    }
+
+    function test_setModeWithPermissions_switchesToAllowlistWithPermissions() public {
+        // Start in BLOCKLIST mode
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installBlocklist(perms);
+
+        // Switch to ALLOWLIST with targetC allowed
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](1);
+        newPerms[0] = AllowlistHook.TargetPermission({ target: targetC, selector: WILDCARD });
+
+        vm.prank(account);
+        hook.setModeWithPermissions(AllowlistHook.Mode.ALLOWLIST, newPerms);
+
+        // targetC should be allowed
+        assertTrue(hook.isTargetAllowed(account, targetC, TRANSFER_SELECTOR));
+        // targetA should NOT be allowed (old blocklist permission cleared)
+        assertFalse(hook.isTargetAllowed(account, targetA, TRANSFER_SELECTOR));
+    }
+
+    function test_setModeWithPermissions_skipsProtectedTargets() public {
+        address[] memory protected = new address[](1);
+        protected[0] = protectedHookA;
+
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installAllowlistWithProtected(perms, protected);
+
+        // Switch to BLOCKLIST with a protected target in new permissions
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](2);
+        newPerms[0] = AllowlistHook.TargetPermission({ target: targetB, selector: WILDCARD });
+        newPerms[1] = AllowlistHook.TargetPermission({ target: protectedHookA, selector: WILDCARD });
+
+        vm.prank(account);
+        hook.setModeWithPermissions(AllowlistHook.Mode.BLOCKLIST, newPerms);
+
+        // targetB permission should be stored
+        assertTrue(hook.permissions(account, targetB, WILDCARD));
+        // Protected target permission should NOT be stored
+        assertFalse(hook.permissions(account, protectedHookA, WILDCARD));
+    }
+
+    function test_setModeWithPermissions_revertsIfSameMode() public {
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installAllowlist(perms);
+
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](0);
+        vm.prank(account);
+        vm.expectRevert(AllowlistHook.AlreadyInMode.selector);
+        hook.setModeWithPermissions(AllowlistHook.Mode.ALLOWLIST, newPerms);
+    }
+
+    function test_setModeWithPermissions_revertsIfNotInitialized() public {
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](0);
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSignature("NotInitialized(address)", account));
+        hook.setModeWithPermissions(AllowlistHook.Mode.BLOCKLIST, newPerms);
+    }
+
+    function test_setModeWithPermissions_tooManyPermissions_reverts() public {
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installAllowlist(perms);
+
+        // Create 101 permissions (exceeds MAX_PERMISSIONS = 100)
+        AllowlistHook.TargetPermission[] memory tooMany = new AllowlistHook.TargetPermission[](101);
+        for (uint256 i; i < 101; i++) {
+            tooMany[i] = AllowlistHook.TargetPermission({
+                target: address(uint160(0xdead0000 + i)),
+                selector: WILDCARD
+            });
+        }
+
+        vm.prank(account);
+        vm.expectRevert(abi.encodeWithSelector(AllowlistHook.TooManyPermissions.selector, 100));
+        hook.setModeWithPermissions(AllowlistHook.Mode.BLOCKLIST, tooMany);
+    }
+
+    function test_setModeWithPermissions_emitsModeChangedEvent() public {
+        AllowlistHook.TargetPermission[] memory perms = new AllowlistHook.TargetPermission[](1);
+        perms[0] = AllowlistHook.TargetPermission({ target: targetA, selector: WILDCARD });
+        _installAllowlist(perms);
+
+        AllowlistHook.TargetPermission[] memory newPerms = new AllowlistHook.TargetPermission[](1);
+        newPerms[0] = AllowlistHook.TargetPermission({ target: targetB, selector: WILDCARD });
+
+        vm.expectEmit(true, false, false, true);
+        emit AllowlistHook.ModeChanged(account, AllowlistHook.Mode.BLOCKLIST);
+
+        vm.prank(account);
+        hook.setModeWithPermissions(AllowlistHook.Mode.BLOCKLIST, newPerms);
+    }
 }
