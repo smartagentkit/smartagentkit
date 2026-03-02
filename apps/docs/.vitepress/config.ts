@@ -5,9 +5,9 @@ export default defineConfig({
   title: "SmartAgentKit",
   description:
     "Open-source SDK for deploying policy-governed smart wallets for AI agents on EVM chains",
-  base: "/smart-agent-kit/",
+  base: "/",
 
-  head: [["link", { rel: "icon", href: "/smart-agent-kit/logo.svg" }]],
+  head: [["link", { rel: "icon", href: "/logo.svg" }]],
 
   themeConfig: {
     logo: "/logo.svg",
