@@ -1,3 +1,24 @@
+[submodule "packages/contracts/lib/account-abstraction"]
+	path = packages/contracts/lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction
+[submodule "packages/contracts/lib/core-modules"]
+	path = packages/contracts/lib/core-modules
+	url = https://github.com/rhinestonewtf/core-modules
+[submodule "packages/contracts/lib/forge-std"]
+	path = packages/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "packages/contracts/lib/modulekit"]
+	path = packages/contracts/lib/modulekit
+	url = https://github.com/rhinestonewtf/modulekit
+[submodule "packages/contracts/lib/openzeppelin-contracts"]
+	path = packages/contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "packages/contracts/lib/safe-smart-account"]
+	path = packages/contracts/lib/safe-smart-account
+	url = https://github.com/safe-global/safe-smart-account
+[submodule "packages/contracts/lib/safe7579"]
+	path = packages/contracts/lib/safe7579
+	url = https://github.com/rhinestonewtf/safe7579
 [submodule "packages/contracts/lib/solady"]
 	path = packages/contracts/lib/solady
 	url = https://github.com/Vectorized/solady

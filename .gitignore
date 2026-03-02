@@ -12,7 +12,6 @@ dist/
 # Foundry
 packages/contracts/out/
 packages/contracts/cache/
-packages/contracts/lib/
 
 # Environment
 .env
