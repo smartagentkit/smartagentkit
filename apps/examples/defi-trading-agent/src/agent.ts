@@ -155,7 +155,7 @@ async function runRealAgent() {
 
   // 3. Create session key for the agent
   console.log("3. Creating session key for agent...");
-  const { sessionKey, privateKey: sessionPrivateKey, permissionId } =
+  const { sessionKey, permissionId } =
     await sakClient.createSession(
       wallet,
       {
@@ -179,7 +179,6 @@ async function runRealAgent() {
   const tools = createSmartAgentKitTools(
     sakClient,
     wallet.address,
-    sessionPrivateKey,
   );
   console.log(`   ${tools.length} tools available: ${tools.map((t) => t.name).join(", ")}`);
   console.log();

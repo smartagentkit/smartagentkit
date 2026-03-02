@@ -192,8 +192,7 @@ export function createSmartAgentKitTools(
             value: weiValueSchema
               .optional()
               .describe("ETH value in wei (as string). Defaults to '0'."),
-            data: z
-              .string()
+            data: calldataSchema
               .optional()
               .describe("Calldata (0x-prefixed hex). Defaults to '0x'."),
           }),

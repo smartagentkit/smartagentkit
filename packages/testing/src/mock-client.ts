@@ -217,11 +217,10 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
     wallet: AgentWallet,
     params: CreateSessionParams,
     _ownerKey: SignerKey,
-  ): Promise<{ sessionKey: Address; privateKey: Hex; permissionId: Hex }> {
+  ): Promise<{ sessionKey: Address; permissionId: Hex }> {
     const state = this.getState(wallet.address);
 
     const sessionKey = deterministicAddress(Date.now() % 100000);
-    const privateKey = `0x${"ab".repeat(32)}` as Hex;
     const permissionId = `0x${"cd".repeat(32)}` as Hex;
 
     const session: ActiveSession = {
@@ -238,7 +237,7 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
       expiresAt: params.expiresAt,
     });
 
-    return { sessionKey, privateKey, permissionId };
+    return { sessionKey, permissionId };
   }
 
   async revokeSession(

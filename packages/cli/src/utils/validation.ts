@@ -84,6 +84,22 @@ export function resolveSignerKey(
   const rawKey = keyValue ?? process.env[keyEnvVar];
   const rawMnemonic = mnemonicValue ?? process.env[mnemonicEnvVar];
 
+  // SECURITY: Warn if key material was passed as a CLI argument (visible in `ps aux`)
+  if (keyValue) {
+    process.stderr.write(
+      `\x1b[33mWARNING: ${label} private key passed as a CLI argument. ` +
+        `CLI arguments are visible to other users via \`ps aux\`. ` +
+        `Use the ${keyEnvVar} environment variable instead.\x1b[0m\n`,
+    );
+  }
+  if (mnemonicValue) {
+    process.stderr.write(
+      `\x1b[33mWARNING: ${label} mnemonic passed as a CLI argument. ` +
+        `CLI arguments are visible to other users via \`ps aux\`. ` +
+        `Use the ${mnemonicEnvVar} environment variable instead.\x1b[0m\n`,
+    );
+  }
+
   if (rawKey) {
     return validatePrivateKey(rawKey, label);
   }
@@ -94,8 +110,9 @@ export function resolveSignerKey(
   }
 
   throw new Error(
-    `No ${label} credential provided. Use --${label}-key <hex>, --${label}-mnemonic <phrase>, ` +
-      `or set ${keyEnvVar} / ${mnemonicEnvVar} environment variable.`,
+    `No ${label} credential provided. ` +
+      `Set the ${keyEnvVar} or ${mnemonicEnvVar} environment variable ` +
+      `(preferred), or use --${label}-key / --${label}-mnemonic.`,
   );
 }
 

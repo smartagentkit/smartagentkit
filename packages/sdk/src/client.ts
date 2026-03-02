@@ -3,6 +3,8 @@ import {
   createWalletClient,
   http,
   encodeFunctionData,
+  isAddress,
+  isHex,
   type Address,
   type Hex,
   type PublicClient,
@@ -92,6 +94,11 @@ type Erc7579SmartAccountClient = SmartAccountClient<any, any, any> & {
 /** Resolve a SignerKey to a viem LocalAccount */
 function resolveAccount(key: SignerKey) {
   if (typeof key === "string") {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(key)) {
+      throw new WalletCreationError(
+        "Invalid private key format. Expected a 0x-prefixed 32-byte hex string.",
+      );
+    }
     return privateKeyToAccount(key as Hex);
   }
   return mnemonicToAccount(key.mnemonic, {
@@ -126,11 +133,10 @@ function resolveAccount(key: SignerKey) {
  * });
  * ```
  */
-/** Stored metadata for an enabled session */
+/** Stored metadata for an enabled session (private key is NOT stored) */
 interface SessionMetadata {
   permissionId: Hex;
   sessionKeyAddress: Address;
-  sessionKeyPrivateKey: Hex;
   expiresAt: number;
   actions: { target: Address; selector: Hex }[];
 }
@@ -193,7 +199,8 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // Validate owner address matches derived key
       if (ownerAccount.address.toLowerCase() !== params.owner.toLowerCase()) {
         throw new WalletCreationError(
-          `Owner address mismatch: key derives ${ownerAccount.address} but params.owner is ${params.owner}`,
+          "Owner address does not match the provided signing key. " +
+            "Verify that the private key or mnemonic corresponds to the specified owner address.",
         );
       }
 
@@ -262,7 +269,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     } catch (error) {
       if (error instanceof WalletCreationError) throw error;
       throw new WalletCreationError(
-        error instanceof Error ? error.message : String(error),
+        "Wallet deployment failed. Check your RPC/bundler configuration and that the owner key is correct.",
         error,
       );
     }
@@ -339,13 +346,19 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * the smart account via Smart Sessions. The session is scoped to
    * specific target contracts, function selectors, and time window.
    *
-   * @returns The session key address, private key, and permission ID.
+   * @returns The session key address and permission ID.
+   *
+   * SECURITY: The session private key is intentionally NOT returned or stored
+   * by the SDK. The caller should use the `sessionKey` address to identify
+   * the session on-chain, and manage key material externally via a secure
+   * key management system. To use a pre-generated key pair, provide the
+   * session key address in `params.sessionKey`.
    */
   async createSession(
     wallet: AgentWallet,
     params: CreateSessionParams,
     ownerKey: SignerKey,
-  ): Promise<{ sessionKey: Address; privateKey: Hex; permissionId: Hex }> {
+  ): Promise<{ sessionKey: Address; permissionId: Hex }> {
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -414,12 +427,12 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // when processing a UserOp with the ENABLE mode signature.
       // For now, we store the session metadata for later use.
 
-      // 9. Store session metadata
+      // 9. Store session metadata (private key is NOT stored — the caller
+      //    must manage key material externally via a secure key management system)
       const walletSessions = this.sessions.get(wallet.address) ?? [];
       walletSessions.push({
         permissionId,
         sessionKeyAddress: sessionAccount.address,
-        sessionKeyPrivateKey: sessionPrivateKey,
         expiresAt: params.expiresAt,
         actions: params.actions.map((a) => ({
           target: a.target,
@@ -430,13 +443,12 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return {
         sessionKey: sessionAccount.address,
-        privateKey: sessionPrivateKey,
         permissionId,
       };
     } catch (error) {
       if (error instanceof SessionError) throw error;
       throw new SessionError(
-        error instanceof Error ? error.message : String(error),
+        "Session creation failed. Check that the wallet is deployed and the owner key is correct.",
       );
     }
   }
@@ -465,7 +477,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       );
     } catch (error) {
       throw new SessionError(
-        error instanceof Error ? error.message : String(error),
+        "Session revocation failed. Check the permission ID and wallet connection.",
       );
     }
   }
@@ -494,6 +506,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * Hooks (spending limits, allowlist, pause) are enforced on-chain.
    */
   async execute(wallet: AgentWallet, params: ExecuteParams): Promise<Hex> {
+    // Pre-flight validation: block calls to infrastructure contracts
+    this.validateTransaction(params);
+
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -509,8 +524,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return hash;
     } catch (error) {
+      if (error instanceof ExecutionError) throw error;
       throw new ExecutionError(
-        error instanceof Error ? error.message : String(error),
+        "Transaction failed. Check that the target, value, and calldata are correct.",
         error,
       );
     }
@@ -524,6 +540,11 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     wallet: AgentWallet,
     params: ExecuteBatchParams,
   ): Promise<Hex> {
+    // Pre-flight validation: block calls to infrastructure contracts
+    for (const call of params.calls) {
+      this.validateTransaction(call);
+    }
+
     const client = this.getWalletClient(wallet.address);
 
     try {
@@ -539,8 +560,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
       return hash;
     } catch (error) {
+      if (error instanceof ExecutionError) throw error;
       throw new ExecutionError(
-        error instanceof Error ? error.message : String(error),
+        "Batch transaction failed. Check that all targets, values, and calldata are correct.",
         error,
       );
     }
@@ -672,10 +694,74 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   // ─── Private Helpers ──────────────────────────────────────────
 
   private resolvePolicies(params: CreateWalletParams): PolicyConfig[] {
+    let policies: PolicyConfig[];
     if (params.preset) {
-      return PRESETS[params.preset](params.owner, params.presetParams);
+      policies = PRESETS[params.preset](params.owner, params.presetParams);
+    } else {
+      policies = params.policies ?? [];
     }
-    return params.policies ?? [];
+
+    // Auto-populate protectedAddresses on AllowlistHook policies
+    // to prevent agents from calling hook/infrastructure contracts directly.
+    // This is critical: without it, an agent can call setGuardian(),
+    // clearTrustedForwarder(), removeSpendingLimit(), or removeHook().
+    if (policies.length > 0 && this.config.moduleAddresses) {
+      const moduleAddresses = this.config.moduleAddresses;
+      const infrastructureAddresses: Address[] = [];
+
+      if (moduleAddresses.spendingLimitHook) {
+        infrastructureAddresses.push(moduleAddresses.spendingLimitHook);
+      }
+      if (moduleAddresses.allowlistHook) {
+        infrastructureAddresses.push(moduleAddresses.allowlistHook);
+      }
+      if (moduleAddresses.emergencyPauseHook) {
+        infrastructureAddresses.push(moduleAddresses.emergencyPauseHook);
+      }
+      if (moduleAddresses.automationExecutor) {
+        infrastructureAddresses.push(moduleAddresses.automationExecutor);
+      }
+      // Also protect the HookMultiPlexer itself
+      infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
+
+      let hasAllowlist = false;
+      for (const policy of policies) {
+        if (policy.type === "allowlist") {
+          hasAllowlist = true;
+          // Merge infrastructure addresses into protectedAddresses, deduplicating
+          const existing = new Set(
+            (policy.protectedAddresses ?? []).map((a) => a.toLowerCase()),
+          );
+          const merged = [...(policy.protectedAddresses ?? [])];
+          for (const addr of infrastructureAddresses) {
+            if (!existing.has(addr.toLowerCase())) {
+              merged.push(addr);
+            }
+          }
+          policy.protectedAddresses = merged;
+        }
+      }
+
+      // If there are hooks but no AllowlistHook, the EmergencyPauseHook's
+      // admin functions and all hooks' setTrustedForwarder are unprotected
+      // on-chain. The SDK-side blocklist (validateTransaction) provides a
+      // client-side defense, but on-chain protection requires AllowlistHook.
+      const hasHooks = policies.some(
+        (p) => p.type === "spending-limit" || p.type === "emergency-pause",
+      );
+      if (hasHooks && !hasAllowlist) {
+        // Inject an AllowlistHook in blocklist mode (allows everything except
+        // protected infrastructure addresses) to provide on-chain protection.
+        policies.push({
+          type: "allowlist",
+          mode: "block",
+          targets: [],
+          protectedAddresses: infrastructureAddresses,
+        });
+      }
+    }
+
+    return policies;
   }
 
   private requireModuleAddresses(
@@ -890,6 +976,79 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         }
       }
     });
+  }
+
+  /**
+   * Collect all known infrastructure addresses that must never be
+   * targeted by agent-initiated transactions. This prevents an AI agent
+   * from calling hook admin functions (setGuardian, clearTrustedForwarder,
+   * removeSpendingLimit, removeHook, etc.) to weaken its own policy constraints.
+   */
+  private getProtectedAddresses(): Set<string> {
+    const addresses = new Set<string>();
+
+    // Always protect the EntryPoint and HookMultiPlexer
+    addresses.add(ENTRYPOINT_V07.toLowerCase());
+    addresses.add(HOOK_MULTIPLEXER_ADDRESS.toLowerCase());
+    // Protect Safe7579 infrastructure
+    addresses.add(SAFE_7579_MODULE.toLowerCase());
+    addresses.add(SAFE_7579_LAUNCHPAD.toLowerCase());
+
+    // Protect all configured module addresses
+    const moduleAddresses = this.config.moduleAddresses;
+    if (moduleAddresses) {
+      if (moduleAddresses.spendingLimitHook) {
+        addresses.add(moduleAddresses.spendingLimitHook.toLowerCase());
+      }
+      if (moduleAddresses.allowlistHook) {
+        addresses.add(moduleAddresses.allowlistHook.toLowerCase());
+      }
+      if (moduleAddresses.emergencyPauseHook) {
+        addresses.add(moduleAddresses.emergencyPauseHook.toLowerCase());
+      }
+      if (moduleAddresses.automationExecutor) {
+        addresses.add(moduleAddresses.automationExecutor.toLowerCase());
+      }
+    }
+
+    return addresses;
+  }
+
+  /**
+   * Validate a transaction before submission. Blocks calls to infrastructure
+   * addresses and validates input parameters.
+   *
+   * @throws ExecutionError if the transaction targets a protected address
+   *         or has invalid parameters.
+   */
+  private validateTransaction(params: ExecuteParams): void {
+    // Validate target address format
+    if (!isAddress(params.target)) {
+      throw new ExecutionError(
+        `Invalid target address: "${params.target}". Expected a 0x-prefixed 20-byte hex address.`,
+      );
+    }
+
+    // Block calls to infrastructure contracts
+    const protectedAddresses = this.getProtectedAddresses();
+    if (protectedAddresses.has(params.target.toLowerCase())) {
+      throw new ExecutionError(
+        `Transaction blocked: target ${params.target} is a protected infrastructure contract. ` +
+          "Agent wallets cannot call hook, multiplexer, or EntryPoint contracts directly.",
+      );
+    }
+
+    // Validate value is non-negative
+    if (params.value !== undefined && params.value < 0n) {
+      throw new ExecutionError("Transaction value cannot be negative.");
+    }
+
+    // Validate calldata format if provided
+    if (params.data && params.data !== "0x" && !isHex(params.data)) {
+      throw new ExecutionError(
+        `Invalid calldata: "${params.data}". Expected a 0x-prefixed hex string.`,
+      );
+    }
   }
 
   private getWalletClient(walletAddress: Address): Erc7579SmartAccountClient {

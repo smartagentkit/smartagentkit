@@ -43,7 +43,9 @@ export const PRESETS: Record<
             mode: "allow" as const,
             targets: (params.allowedDexes as Address[]).map((addr) => ({
               address: addr,
-              selector: "0x00000000" as `0x${string}`,
+              // Omit selector to use the wildcard (0x431e2cf5) — allows all
+              // function calls, not just ETH transfers. 0x00000000 is NOT a
+              // wildcard; it only matches empty calldata.
             })),
           },
         ]

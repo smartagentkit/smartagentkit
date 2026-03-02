@@ -247,7 +247,7 @@ export interface ISmartAgentKitClient {
     wallet: AgentWallet,
     params: CreateSessionParams,
     ownerKey: SignerKey,
-  ): Promise<{ sessionKey: Address; privateKey: Hex; permissionId: Hex }>;
+  ): Promise<{ sessionKey: Address; permissionId: Hex }>;
   revokeSession(wallet: AgentWallet, permissionId: Hex, ownerKey: SignerKey): Promise<void>;
   getActiveSessions(walletAddress: Address): ActiveSession[];
 }
