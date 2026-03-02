@@ -22,7 +22,10 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "clean": "turbo clean",
-    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "docs:dev": "pnpm --filter @smartagentkit/docs dev",
+    "docs:build": "pnpm --filter @smartagentkit/docs build",
+    "docs:preview": "pnpm --filter @smartagentkit/docs preview"
   },
   "devDependencies": {
     "turbo": "^2.5.0",
