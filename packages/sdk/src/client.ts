@@ -3,6 +3,7 @@ import {
   createWalletClient,
   http,
   encodeFunctionData,
+  encodeAbiParameters,
   isAddress,
   isHex,
   type Address,
@@ -21,6 +22,7 @@ import {
   type SmartAccountClient,
 } from "permissionless/clients";
 import { erc7579Actions } from "permissionless/actions/erc7579";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { getHookMultiPlexer } from "@rhinestone/module-sdk";
 
 import type {
@@ -51,9 +53,8 @@ import {
   ATTESTERS_THRESHOLD,
   HOOK_MULTIPLEXER_ADDRESS,
   SMART_SESSIONS_VALIDATOR,
-  HOOK_TYPE_GLOBAL,
   MODULE_ONINSTALL_ABI,
-  HOOK_MULTIPLEXER_ABI,
+  MODULE_ONUNINSTALL_ABI,
   SPENDING_LIMIT_HOOK_ABI,
   EMERGENCY_PAUSE_HOOK_ABI,
 } from "./constants.js";
@@ -107,6 +108,19 @@ function resolveAccount(key: SignerKey) {
 }
 
 /**
+ * Wrap raw hook initData in Safe7579's expected format for the `hooks` parameter.
+ *
+ * Safe7579's `_installHook` decodes data as `abi.decode(data, (HookType, bytes4, bytes))`.
+ * HookType.GLOBAL = 0, bytes4(0) for global hooks.
+ */
+function wrapHookInitData(rawInitData: Hex): Hex {
+  return encodeAbiParameters(
+    [{ type: "uint8" }, { type: "bytes4" }, { type: "bytes" }],
+    [0, "0x00000000" as Hex, rawInitData],
+  );
+}
+
+/**
  * Main client for SmartAgentKit — deploy and manage policy-governed
  * smart wallets for AI agents.
  *
@@ -144,6 +158,7 @@ interface SessionMetadata {
 export class SmartAgentKitClient implements ISmartAgentKitClient {
   private config: SmartAgentKitConfig;
   private publicClient: PublicClient;
+  private paymasterClient: ReturnType<typeof createPimlicoClient> | undefined;
   private walletClients: Map<Address, Erc7579SmartAccountClient>;
   private sessions: Map<Address, SessionMetadata[]>;
 
@@ -161,6 +176,13 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       chain: config.chain,
       transport: http(config.rpcUrl),
     });
+    if (config.paymasterUrl) {
+      this.paymasterClient = createPimlicoClient({
+        chain: config.chain,
+        transport: http(config.paymasterUrl),
+        entryPoint: { address: ENTRYPOINT_V07, version: "0.7" },
+      });
+    }
     this.walletClients = new Map();
     this.sessions = new Map();
   }
@@ -170,12 +192,10 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   /**
    * Deploy a new policy-governed smart wallet for an AI agent.
    *
-   * The wallet is a Safe smart account with ERC-7579 modules. A
-   * HookMultiPlexer is installed as the single hook, and sub-hooks
-   * (SpendingLimit, Allowlist, EmergencyPause) are routed through it.
-   *
-   * The deployment and policy initialization happen atomically in
-   * the first UserOperation.
+   * The wallet is a Safe smart account with ERC-7579 modules. An empty
+   * HookMultiPlexer is installed during launchpad deployment, then
+   * sub-hooks (SpendingLimit, Allowlist, EmergencyPause) are initialized
+   * and the HMP is reconfigured in the first UserOperation.
    */
   async createWallet(params: CreateWalletParams): Promise<AgentWallet> {
     try {
@@ -204,18 +224,23 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         );
       }
 
-      // 4. Create HookMultiPlexer with EMPTY sub-hooks.
-      //    Sub-hooks are added in the first UserOp after deployment,
-      //    because they need separate onInstall initialization.
-      const hookModule = getHookMultiPlexer({
+      // 4. Deploy with EMPTY HookMultiPlexer via the `hooks` parameter.
+      //    Safe7579's _installHook expects data as abi.encode(HookType, bytes4, bytes),
+      //    so we wrap the raw initData. Sub-hooks are configured post-deployment
+      //    because the launchpad's delegatecall chain cannot handle non-empty
+      //    globalHooks in HMP.onInstall during initialization.
+      const emptyHMP = getHookMultiPlexer({
         globalHooks: [],
         valueHooks: [],
         delegatecallHooks: [],
         sigHooks: [],
         targetHooks: [],
       });
+      const wrappedEmptyInitData = wrapHookInitData(emptyHMP.initData);
 
       // 5. Create Safe smart account with ERC-7579 launchpad
+      //    The `hooks` parameter installs the empty HMP as the global hook
+      //    during the atomic launchpad deployment.
       const safeAccount = await toSafeSmartAccount({
         client: this.publicClient,
         owners: [ownerAccount],
@@ -228,14 +253,14 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         erc7579LaunchpadAddress: SAFE_7579_LAUNCHPAD,
         hooks: [
           {
-            address: hookModule.address,
-            context: hookModule.initData,
+            address: emptyHMP.address,
+            context: wrappedEmptyInitData as Address,
           },
         ],
         attesters: [RHINESTONE_ATTESTER],
         attestersThreshold: ATTESTERS_THRESHOLD,
         saltNonce: params.salt ?? 0n,
-      });
+      } as Parameters<typeof toSafeSmartAccount>[0]);
 
       // 6. Create SmartAccountClient with ERC-7579 actions
       const smartAccountClient = createSmartAccountClient({
@@ -243,6 +268,16 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         chain: this.config.chain,
         bundlerTransport: http(this.config.bundlerUrl),
         client: this.publicClient,
+        ...(this.paymasterClient ? { paymaster: this.paymasterClient } : {}),
+        ...(this.paymasterClient
+          ? {
+              userOperation: {
+                estimateFeesPerGas: async () =>
+                  (await this.paymasterClient!.getUserOperationGasPrice())
+                    .fast,
+              },
+            }
+          : {}),
       }).extend(erc7579Actions()) as unknown as Erc7579SmartAccountClient;
 
       // 7. Store client for future execute/query calls
@@ -254,7 +289,7 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
           smartAccountClient,
           policies,
           moduleAddresses,
-          hookModule.address,
+          emptyHMP.address,
         );
       }
 
@@ -305,6 +340,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       chain: this.config.chain,
       bundlerTransport: http(this.config.bundlerUrl),
       client: this.publicClient,
+      ...(this.paymasterClient ? { paymaster: this.paymasterClient } : {}),
+      ...(this.paymasterClient
+        ? {
+            userOperation: {
+              estimateFeesPerGas: async () =>
+                (await this.paymasterClient!.getUserOperationGasPrice()).fast,
+            },
+          }
+        : {}),
     }).extend(erc7579Actions()) as unknown as Erc7579SmartAccountClient;
 
     this.walletClients.set(walletAddress, smartAccountClient);
@@ -813,15 +857,19 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
   }
 
   /**
-   * Build and send the first UserOp that initializes all sub-hooks
-   * and adds them to the HookMultiPlexer.
+   * Build and send the UserOp that initializes all sub-hooks and
+   * reconfigures the HookMultiPlexer with the full globalHooks list.
    *
-   * This batch includes for each sub-hook:
-   * 1. onInstall(initData) — initialize the sub-hook for this account
-   * 2. setTrustedForwarder(hookMultiPlexer) — so sub-hooks resolve the
-   *    correct account when called through the multiplexer
-   * 3. addHook(hookAddress, GLOBAL) on HookMultiPlexer — register the
-   *    sub-hook for all transactions
+   * The Safe is deployed with an EMPTY HookMultiPlexer (no globalHooks)
+   * because Safe7579's launchpad delegatecall chain cannot handle non-empty
+   * globalHooks during initialization. This method runs post-deployment to:
+   *
+   * 1. HMP.onUninstall("0x") — reset the empty HMP
+   * 2. Sub-hook.onInstall(initData) for each configured hook — sets up
+   *    per-account storage (limits, allowlist, guardian, etc.) with HMP
+   *    as the trusted forwarder
+   * 3. HMP.onInstall(fullInitData) — reinstall HMP with all globalHooks
+   *    sorted ascending (bypasses ERC-7484 registry check that blocks addHook)
    */
   private async initializePolicies(
     client: Erc7579SmartAccountClient,
@@ -829,43 +877,51 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     moduleAddresses: ModuleAddresses,
     hookMultiPlexerAddress: Address,
   ): Promise<void> {
+    // Collect sub-hook addresses first to decide whether HMP reconfiguration is needed.
+    // Only hook-type policies (spending-limit, allowlist, emergency-pause) are sub-hooks;
+    // automation policies are executors and don't affect the HMP.
+    const subHookAddresses = this.collectSubHookAddresses(
+      policies,
+      moduleAddresses,
+    );
+
+    // If no hook policies, nothing to do — the empty HMP stays as-is
+    if (subHookAddresses.length === 0) return;
+
     const calls: { to: Address; value: bigint; data: Hex }[] = [];
 
+    // Step 1: Uninstall the empty HMP (resets initialized flag + clears hooks)
+    calls.push({
+      to: hookMultiPlexerAddress,
+      value: 0n,
+      data: encodeFunctionData({
+        abi: MODULE_ONUNINSTALL_ABI,
+        functionName: "onUninstall",
+        args: ["0x"],
+      }),
+    });
+
+    // Step 2: Initialize each sub-hook with per-account config
     for (const policy of policies) {
       switch (policy.type) {
         case "spending-limit": {
           const hookAddress = moduleAddresses.spendingLimitHook;
           const initData = encodeSpendingLimitInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
         case "allowlist": {
           const hookAddress = moduleAddresses.allowlistHook;
           const initData = encodeAllowlistInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
         case "emergency-pause": {
           const hookAddress = moduleAddresses.emergencyPauseHook;
           const initData = encodeEmergencyPauseInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(
-            calls,
-            hookAddress,
-            initData,
-            hookMultiPlexerAddress,
-          );
+          this.pushSubHookInitCalls(calls, hookAddress, initData);
           break;
         }
 
@@ -876,30 +932,76 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       }
     }
 
-    if (calls.length === 0) return;
+    // Step 3: Reinstall HMP with all globalHooks sorted ascending.
+    // Using onInstall (not addHook) bypasses the ERC-7484 registry
+    // attestation check that blocks our custom hooks.
+    const fullHMP = getHookMultiPlexer({
+      globalHooks: subHookAddresses,
+      valueHooks: [],
+      delegatecallHooks: [],
+      sigHooks: [],
+      targetHooks: [],
+    });
+    calls.push({
+      to: hookMultiPlexerAddress,
+      value: 0n,
+      data: encodeFunctionData({
+        abi: MODULE_ONINSTALL_ABI,
+        functionName: "onInstall",
+        args: [fullHMP.initData],
+      }),
+    });
 
-    // Send as a single batched UserOp
+    // Send as a single batched UserOp (also triggers Safe deployment)
     await client.sendTransaction({
       calls,
     } as Parameters<typeof client.sendTransaction>[0]);
   }
 
   /**
-   * Push the 2 calls needed to initialize a sub-hook:
-   * 1. onInstall(initData) on the sub-hook — sets trusted forwarder from init data
-   * 2. addHook(hookAddr, GLOBAL) on the HookMultiPlexer
+   * Collect all sub-hook addresses from the policy configuration.
+   * Used to build the full HMP.onInstall data with all globalHooks
+   * during post-deployment reconfiguration.
    *
-   * Note: The trusted forwarder is now set during onInstall via the encoded init data
-   * (passed as the first parameter). A separate setTrustedForwarder call is no longer
-   * needed, reducing gas cost and batch size.
+   * Returns addresses sorted ascending (required by HookMultiPlexer).
+   */
+  private collectSubHookAddresses(
+    policies: PolicyConfig[],
+    moduleAddresses?: ModuleAddresses,
+  ): Address[] {
+    if (!moduleAddresses) return [];
+    const addresses: Address[] = [];
+    for (const policy of policies) {
+      switch (policy.type) {
+        case "spending-limit":
+          addresses.push(moduleAddresses.spendingLimitHook);
+          break;
+        case "allowlist":
+          addresses.push(moduleAddresses.allowlistHook);
+          break;
+        case "emergency-pause":
+          addresses.push(moduleAddresses.emergencyPauseHook);
+          break;
+        // automation is an executor, not a hook
+      }
+    }
+    // HookMultiPlexer requires sorted arrays
+    return addresses.sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase()),
+    );
+  }
+
+  /**
+   * Push the onInstall call needed to initialize a sub-hook.
+   * Configures the hook's per-account storage (trusted forwarder,
+   * limits, allowlist, guardian, etc.).
    */
   private pushSubHookInitCalls(
     calls: { to: Address; value: bigint; data: Hex }[],
     hookAddress: Address,
     initData: Hex,
-    hookMultiPlexerAddress: Address,
   ): void {
-    // 1. Initialize the sub-hook for this account (sets trusted forwarder from init data)
+    // Initialize the sub-hook for this account (sets trusted forwarder from init data)
     calls.push({
       to: hookAddress,
       value: 0n,
@@ -907,17 +1009,6 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         abi: MODULE_ONINSTALL_ABI,
         functionName: "onInstall",
         args: [initData],
-      }),
-    });
-
-    // 2. Register sub-hook as GLOBAL in the HookMultiPlexer
-    calls.push({
-      to: hookMultiPlexerAddress,
-      value: 0n,
-      data: encodeFunctionData({
-        abi: HOOK_MULTIPLEXER_ABI,
-        functionName: "addHook",
-        args: [hookAddress, HOOK_TYPE_GLOBAL],
       }),
     });
   }

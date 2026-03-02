@@ -200,6 +200,17 @@ export const MODULE_ONINSTALL_ABI = [
   },
 ] as const;
 
+/** ERC-7579 onUninstall ABI (common to all modules) */
+export const MODULE_ONUNINSTALL_ABI = [
+  {
+    name: "onUninstall",
+    type: "function",
+    inputs: [{ name: "data", type: "bytes" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
 /** ModuleKit TrustedForwarder.setTrustedForwarder ABI */
 export const SET_TRUSTED_FORWARDER_ABI = [
   {
