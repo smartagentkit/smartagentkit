@@ -5,9 +5,9 @@
   "safe7579Launchpad": "0x7579011aB74c46090561ea277Ba79D510c6C00ff",
   "rhinestoneAttester": "0x000000333034E9f539ce08819E12c1b8Cb29084d",
   "hookMultiPlexer": "0xF6782ed057F95f334D04F0Af1Af4D14fb84DE549",
-  "spendingLimitHook": "0x0ea97ef2fc52700d1628110a8f411fefb0c0aa8b",
-  "allowlistHook": "0x61a2100072d03f66de6f7dd0dfc2f7aa5c91e777",
-  "emergencyPauseHook": "0xb8fdc9ee56cfb4077e132eff631b546fe6e79fec",
-  "automationExecutor": "0x729c29b35c396b907ed118f00fbe4d4bcc3a7f46",
-  "moduleSetupHelper": "0x4f1555baf4b3221c373094d47419596118828e41"
+  "spendingLimitHook": "0xd67a5E6784A66Ddf4C09EA7bbf81Ab89532624E4",
+  "allowlistHook": "0x7899b03386A3874393A3769D637977d947A9Fc66",
+  "emergencyPauseHook": "0xAc0cE5672aED1Bfe5549b885f883a770Acd8cAE3",
+  "automationExecutor": "0x795DB663b70bAe110C10694DF3f5D801b76E2b20",
+  "moduleSetupHelper": "0xcBb12Eb2CF324B1C34160F72E037589CEEC35Fa0"
 }
