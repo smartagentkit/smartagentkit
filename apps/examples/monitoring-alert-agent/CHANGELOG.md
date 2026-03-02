@@ -1,5 +1,12 @@
 # monitoring-alert-agent-example
 
+## 0.1.2
+
+### Patch Changes
+
+- @smartagentkit/sdk@0.1.2
+- @smartagentkit/testing@0.1.2
+
 ## 0.1.1
 
 ### Patch Changes
