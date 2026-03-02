@@ -1,5 +1,13 @@
 # payment-distribution-bot-example
 
+## 0.1.4
+
+### Patch Changes
+
+- Updated dependencies
+  - @smartagentkit/sdk@0.1.4
+  - @smartagentkit/testing@0.1.4
+
 ## 0.1.3
 
 ### Patch Changes
