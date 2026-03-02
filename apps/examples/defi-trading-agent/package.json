@@ -1,6 +1,6 @@
 {
   "name": "defi-trading-agent-example",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Example: DeFi trading agent using SmartAgentKit + LangChain",
   "type": "module",

@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'apps/docs/**'
+      - 'packages/sdk/src/**'
+      - 'packages/cli/src/**'
+      - 'packages/integrations/langchain/src/**'
+      - 'SECURITY.md'
   workflow_dispatch:
 
 permissions:
