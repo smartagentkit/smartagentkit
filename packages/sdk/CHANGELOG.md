@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.6
+
+### Patch Changes
+
+- fix(sdk): wait for 2 block confirmations in pause/unpause
+
 ## 0.1.5
 
 ### Patch Changes
