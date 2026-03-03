@@ -1,6 +1,6 @@
 # Policies
 
-Functions for encoding policy configurations into ERC-7579 module installation data.
+Functions and types for encoding policy configurations into ERC-7579 module installation data. Policies use a plugin architecture — see the [Custom Policies Guide](/guides/custom-policies) for extending with your own hooks.
 
 ## `encodePolicyInitData`
 
@@ -115,3 +115,59 @@ const initData = encodeEmergencyPauseInitData({
   autoUnpauseAfter: 86_400, // 24 hours
 });
 ```
+
+## Plugin Architecture
+
+### `PolicyPlugin<TConfig>`
+
+Interface for policy plugins. See [Custom Policies Guide](/guides/custom-policies) for full documentation.
+
+```typescript
+interface PolicyPlugin<TConfig = unknown> {
+  readonly id: string;
+  readonly name: string;
+  readonly moduleType: "hook" | "executor" | "validator" | "fallback";
+  readonly isInfrastructure: boolean;
+  readonly defaultAddresses?: Record<number, Address>;
+  readonly abi: readonly Record<string, unknown>[];
+  encodeInitData(config: TConfig, trustedForwarder: Address): Hex;
+  validateConfig(config: TConfig): void;
+  toInstalledPolicy(config: TConfig, moduleAddress: Address): {
+    moduleAddress: Address; moduleType: number; name: string;
+  };
+}
+```
+
+### `pluginRegistry`
+
+Singleton registry of policy plugins.
+
+| Method | Description |
+|---|---|
+| `register(plugin)` | Register a new plugin (throws on duplicate) |
+| `replace(plugin)` | Override an existing registration |
+| `get(id)` | Get plugin by ID (throws if not found) |
+| `has(id)` | Check if a plugin is registered |
+| `all()` | Get all registered plugins |
+| `resolveAddress(id, chainId, overrides?)` | Resolve deployed address |
+| `setDefaultAddress(id, chainId, address)` | Set a default address |
+| `getInfrastructureAddresses(chainId, overrides?)` | Get all protected addresses |
+
+### `client.policies`
+
+Policy management API on `SmartAgentKitClient`:
+
+```typescript
+client.policies.install(wallet, params, ownerKey): Promise<void>
+client.policies.installRaw(wallet, params, ownerKey): Promise<void>
+client.policies.list(walletAddress): Promise<InstalledPolicy[]>
+```
+
+### Built-in Plugins
+
+Available as named exports:
+
+- `spendingLimitPlugin` — SpendingLimitHook
+- `allowlistPlugin` — AllowlistHook
+- `emergencyPausePlugin` — EmergencyPauseHook
+- `automationPlugin` — AutomationExecutor (stub)

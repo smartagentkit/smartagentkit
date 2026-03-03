@@ -1,0 +1,23 @@
+{
+  "name": "policy-playground-example",
+  "version": "0.1.8",
+  "private": true,
+  "description": "Example: Custom policy plugin playground for SmartAgentKit",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/playground.ts",
+    "start:mock": "tsx src/playground.ts --mock",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@smartagentkit/sdk": "workspace:*",
+    "@smartagentkit/testing": "workspace:*",
+    "viem": "^2.46.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

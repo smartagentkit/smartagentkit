@@ -56,6 +56,7 @@ export default defineConfig({
               text: "LangChain Integration",
               link: "/guides/langchain-integration",
             },
+            { text: "Custom Policies", link: "/guides/custom-policies" },
             { text: "Testing", link: "/guides/testing" },
             { text: "CLI Usage", link: "/guides/cli-usage" },
             { text: "Deployment", link: "/guides/deployment" },

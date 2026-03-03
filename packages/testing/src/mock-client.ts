@@ -18,7 +18,10 @@ import {
   WalletPausedError,
   ExecutionError,
   SessionError,
+  PRESETS,
+  pluginRegistry,
 } from "@smartagentkit/sdk";
+import type { PresetName } from "@smartagentkit/sdk";
 import type { MockClientOptions, MockLogEntry, MockWalletState } from "./types.js";
 import { createDefaultState, deterministicAddress } from "./mock-state.js";
 
@@ -378,94 +381,14 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
 
   private resolvePolicies(params: CreateWalletParams): PolicyConfig[] {
     if (params.preset) {
-      // Import and resolve presets from SDK
-      return this.resolvePreset(params.preset, params.owner, params.presetParams);
+      // Use SDK PRESETS directly instead of duplicating logic
+      const presetFn = PRESETS[params.preset as PresetName];
+      if (presetFn) {
+        return presetFn(params.owner, params.presetParams);
+      }
+      return [];
     }
     return params.policies ?? [];
-  }
-
-  private resolvePreset(
-    preset: string,
-    owner: Address,
-    params: Record<string, unknown> = {},
-  ): PolicyConfig[] {
-    // Simplified preset resolution matching SDK presets
-    switch (preset) {
-      case "defi-trader":
-        return [
-          {
-            type: "spending-limit",
-            limits: [
-              {
-                token: NATIVE_TOKEN,
-                limit: (params.dailyEthLimit as bigint) ?? parseEther("1"),
-                window: 86400,
-              },
-            ],
-          },
-          {
-            type: "emergency-pause",
-            guardian: (params.guardian as Address) ?? owner,
-            autoUnpauseAfter: 86400,
-          },
-        ];
-      case "treasury-agent":
-        return [
-          {
-            type: "spending-limit",
-            limits: [
-              {
-                token: NATIVE_TOKEN,
-                limit: (params.weeklyEthLimit as bigint) ?? parseEther("5"),
-                window: 604800,
-              },
-            ],
-          },
-          {
-            type: "emergency-pause",
-            guardian: (params.guardian as Address) ?? owner,
-            autoUnpauseAfter: 0,
-          },
-        ];
-      case "payment-agent": {
-        const policies: PolicyConfig[] = [
-          {
-            type: "spending-limit",
-            limits: [
-              {
-                token: NATIVE_TOKEN,
-                limit: (params.dailyLimit as bigint) ?? parseEther("0.1"),
-                window: 86400,
-              },
-            ],
-          },
-        ];
-        const recipients = params.approvedRecipients as Address[] | undefined;
-        if (recipients?.length) {
-          policies.push({
-            type: "allowlist",
-            mode: "allow",
-            targets: recipients.map((addr) => ({ address: addr })),
-          });
-        }
-        policies.push({
-          type: "emergency-pause",
-          guardian: (params.guardian as Address) ?? owner,
-          autoUnpauseAfter: 3600,
-        });
-        return policies;
-      }
-      case "minimal":
-        return [
-          {
-            type: "emergency-pause",
-            guardian: (params.guardian as Address) ?? owner,
-            autoUnpauseAfter: 0,
-          },
-        ];
-      default:
-        return [];
-    }
   }
 
   private applyPolicy(state: MockWalletState, policy: PolicyConfig): void {
@@ -489,6 +412,12 @@ export class MockSmartAgentKitClient implements ISmartAgentKitClient {
         break;
       case "automation":
         // Not relevant for mock
+        break;
+      default:
+        // Custom plugin types — skip enforcement in mock (can't generically enforce)
+        if (pluginRegistry.has((policy as { type: string }).type)) {
+          // Known custom plugin — no-op in mock
+        }
         break;
     }
   }

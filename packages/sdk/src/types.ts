@@ -49,6 +49,8 @@ export interface ModuleAddresses {
   emergencyPauseHook: Address;
   /** AutomationExecutor contract address (optional, Sprint 3) */
   automationExecutor?: Address;
+  /** Custom module addresses keyed by plugin ID (e.g., { "my-hook": "0x..." }) */
+  customModules?: Record<string, Address>;
 }
 
 // ─── Wallet ───────────────────────────────────────────────────
@@ -224,6 +226,30 @@ export interface InstalledPolicy {
   config: PolicyConfig;
 }
 
+// ─── Plugin API Types ────────────────────────────────────────
+
+/** Parameters for installing a policy via client.policies.install() */
+export interface InstallPolicyParams {
+  /** Plugin object or registered plugin ID */
+  plugin: unknown | string;
+  /** Override the hook contract address */
+  hookAddress?: Address;
+  /** Plugin-specific configuration */
+  config: unknown;
+}
+
+/** Parameters for installing a raw (pre-encoded) policy via client.policies.installRaw() */
+export interface InstallRawParams {
+  /** On-chain hook/module contract address */
+  hookAddress: Address;
+  /** ERC-7579 module type */
+  moduleType: "hook" | "executor" | "validator" | "fallback";
+  /** Pre-encoded onInstall init data */
+  initData: Hex;
+  /** Optional ABI for the on-chain contract */
+  abi?: readonly Record<string, unknown>[];
+}
+
 // ─── Client Interface ────────────────────────────────────────
 
 /**
@@ -250,4 +276,10 @@ export interface ISmartAgentKitClient {
   ): Promise<{ sessionKey: Address; permissionId: Hex }>;
   revokeSession(wallet: AgentWallet, permissionId: Hex, ownerKey: SignerKey): Promise<void>;
   getActiveSessions(walletAddress: Address): ActiveSession[];
+  /** Policy management API (install, installRaw, list) */
+  policies?: {
+    install(wallet: AgentWallet, params: InstallPolicyParams, ownerKey: SignerKey): Promise<void>;
+    installRaw(wallet: AgentWallet, params: InstallRawParams, ownerKey: SignerKey): Promise<void>;
+    list(walletAddress: Address): Promise<InstalledPolicy[]>;
+  };
 }

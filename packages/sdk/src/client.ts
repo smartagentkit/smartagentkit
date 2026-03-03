@@ -35,16 +35,16 @@ import type {
   ExecuteParams,
   ExecuteBatchParams,
   InstalledPolicy,
+  InstallPolicyParams,
+  InstallRawParams,
   ActiveSession,
   SignerKey,
   ISmartAgentKitClient,
 } from "./types.js";
 import { PRESETS } from "./presets.js";
-import {
-  encodeSpendingLimitInitData,
-  encodeAllowlistInitData,
-  encodeEmergencyPauseInitData,
-} from "./policies.js";
+import { pluginRegistry } from "./plugins/index.js";
+import { policyTypeToAddressKey } from "./policies.js";
+import type { PolicyPlugin } from "./plugins/types.js";
 import {
   ENTRYPOINT_V07,
   SAFE_7579_MODULE,
@@ -367,6 +367,34 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
   // ─── Policy Management ────────────────────────────────────────
 
+  /**
+   * Policy management API for installing, listing, and managing
+   * both built-in and custom policy plugins on existing wallets.
+   */
+  get policies() {
+    return {
+      /**
+       * Install a policy plugin on an existing wallet.
+       *
+       * For hook-type plugins, performs the HMP uninstall → sub-hook.onInstall →
+       * HMP.onInstall dance to add the new hook alongside existing hooks.
+       * For executor/validator types, calls installModule directly.
+       */
+      install: (wallet: AgentWallet, params: InstallPolicyParams, ownerKey: SignerKey) =>
+        this.installPolicy(wallet, params, ownerKey),
+      /**
+       * Install a raw (pre-encoded) hook/module on an existing wallet.
+       * For advanced users who have their own encoding logic.
+       */
+      installRaw: (wallet: AgentWallet, params: InstallRawParams, ownerKey: SignerKey) =>
+        this.installRawPolicy(wallet, params, ownerKey),
+      /**
+       * List installed policies on a wallet (delegates to getPolicies).
+       */
+      list: (walletAddress: Address) => this.getPolicies(walletAddress),
+    };
+  }
+
   async addPolicy(
     _wallet: AgentWallet,
     _policy: PolicyConfig,
@@ -385,6 +413,172 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
 
   async getPolicies(_walletAddress: Address): Promise<InstalledPolicy[]> {
     throw new Error("Not yet implemented — Sprint 3");
+  }
+
+  /**
+   * Install a policy plugin on an existing wallet.
+   *
+   * For hook-type plugins: performs HMP uninstall → sub-hook.onInstall → HMP.onInstall(full)
+   * to add the new hook alongside any existing hooks.
+   * For executor/validator/fallback types: calls installModule directly.
+   */
+  private async installPolicy(
+    wallet: AgentWallet,
+    params: InstallPolicyParams,
+    _ownerKey: SignerKey,
+  ): Promise<void> {
+    const client = this.getWalletClient(wallet.address);
+    const plugin: PolicyPlugin = typeof params.plugin === "string"
+      ? pluginRegistry.get(params.plugin)
+      : params.plugin as PolicyPlugin;
+
+    // Validate config
+    plugin.validateConfig(params.config);
+
+    // Resolve address
+    const chainId = this.config.chain.id;
+    const hookAddress = params.hookAddress
+      ?? pluginRegistry.resolveAddress(plugin.id, chainId,
+           this.config.moduleAddresses ? this.buildPluginAddressOverrides(this.config.moduleAddresses) : undefined);
+    if (!hookAddress) {
+      throw new PolicyConfigError(
+        `No address found for plugin "${plugin.id}". Provide hookAddress or configure moduleAddresses.`,
+      );
+    }
+
+    if (plugin.moduleType === "hook") {
+      // Hook-type: perform HMP dance
+      const trustedForwarder = HOOK_MULTIPLEXER_ADDRESS;
+      const initData = plugin.encodeInitData(params.config, trustedForwarder);
+
+      // Collect existing sub-hook addresses from installed policies
+      const existingHookAddresses = wallet.policies
+        .filter((p) => p.moduleType === 4) // MODULE_TYPE_HOOK
+        .map((p) => p.moduleAddress);
+
+      // Add the new hook
+      const allHookAddresses = [...existingHookAddresses, hookAddress]
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+      const calls: { to: Address; value: bigint; data: Hex }[] = [];
+
+      // Step 1: Uninstall HMP
+      calls.push({
+        to: HOOK_MULTIPLEXER_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: MODULE_ONUNINSTALL_ABI,
+          functionName: "onUninstall",
+          args: ["0x"],
+        }),
+      });
+
+      // Step 2: Initialize the new sub-hook
+      this.pushSubHookInitCalls(calls, hookAddress, initData);
+
+      // Step 3: Reinstall HMP with all hooks (existing + new)
+      const fullHMP = getHookMultiPlexer({
+        globalHooks: allHookAddresses,
+        valueHooks: [],
+        delegatecallHooks: [],
+        sigHooks: [],
+        targetHooks: [],
+      });
+      calls.push({
+        to: HOOK_MULTIPLEXER_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: MODULE_ONINSTALL_ABI,
+          functionName: "onInstall",
+          args: [fullHMP.initData],
+        }),
+      });
+
+      const hash = await client.sendTransaction({
+        calls,
+      } as Parameters<typeof client.sendTransaction>[0]);
+
+      await this.publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: 2,
+      });
+    } else {
+      // Non-hook type: install directly
+      const moduleTypeStr = plugin.moduleType as "executor" | "validator" | "fallback";
+      await client.installModule({
+        type: moduleTypeStr,
+        address: hookAddress,
+        context: plugin.encodeInitData(params.config, "0x0000000000000000000000000000000000000000" as Address),
+      });
+    }
+  }
+
+  /**
+   * Install a raw (pre-encoded) hook/module on an existing wallet.
+   * Accepts pre-encoded init data for advanced users.
+   */
+  private async installRawPolicy(
+    wallet: AgentWallet,
+    params: InstallRawParams,
+    _ownerKey: SignerKey,
+  ): Promise<void> {
+    const client = this.getWalletClient(wallet.address);
+
+    if (params.moduleType === "hook") {
+      // Hook-type: perform HMP dance
+      const existingHookAddresses = wallet.policies
+        .filter((p) => p.moduleType === 4)
+        .map((p) => p.moduleAddress);
+
+      const allHookAddresses = [...existingHookAddresses, params.hookAddress]
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+      const calls: { to: Address; value: bigint; data: Hex }[] = [];
+
+      calls.push({
+        to: HOOK_MULTIPLEXER_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: MODULE_ONUNINSTALL_ABI,
+          functionName: "onUninstall",
+          args: ["0x"],
+        }),
+      });
+
+      this.pushSubHookInitCalls(calls, params.hookAddress, params.initData);
+
+      const fullHMP = getHookMultiPlexer({
+        globalHooks: allHookAddresses,
+        valueHooks: [],
+        delegatecallHooks: [],
+        sigHooks: [],
+        targetHooks: [],
+      });
+      calls.push({
+        to: HOOK_MULTIPLEXER_ADDRESS,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: MODULE_ONINSTALL_ABI,
+          functionName: "onInstall",
+          args: [fullHMP.initData],
+        }),
+      });
+
+      const hash = await client.sendTransaction({
+        calls,
+      } as Parameters<typeof client.sendTransaction>[0]);
+
+      await this.publicClient.waitForTransactionReceipt({
+        hash,
+        confirmations: 2,
+      });
+    } else {
+      await client.installModule({
+        type: params.moduleType,
+        address: params.hookAddress,
+        context: params.initData,
+      });
+    }
   }
 
   // ─── Session Key Management ───────────────────────────────────
@@ -776,22 +970,16 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     // clearTrustedForwarder(), removeSpendingLimit(), or removeHook().
     if (policies.length > 0 && this.config.moduleAddresses) {
       const moduleAddresses = this.config.moduleAddresses;
-      const infrastructureAddresses: Address[] = [];
 
-      if (moduleAddresses.spendingLimitHook) {
-        infrastructureAddresses.push(moduleAddresses.spendingLimitHook);
-      }
-      if (moduleAddresses.allowlistHook) {
-        infrastructureAddresses.push(moduleAddresses.allowlistHook);
-      }
-      if (moduleAddresses.emergencyPauseHook) {
-        infrastructureAddresses.push(moduleAddresses.emergencyPauseHook);
-      }
-      if (moduleAddresses.automationExecutor) {
-        infrastructureAddresses.push(moduleAddresses.automationExecutor);
-      }
+      // Collect infrastructure addresses from the plugin registry
+      const chainId = this.config.chain.id;
+      const overrides = this.buildPluginAddressOverrides(moduleAddresses);
+      const infrastructureAddresses: Address[] = pluginRegistry.getInfrastructureAddresses(chainId, overrides);
+
       // Also protect the HookMultiPlexer
-      infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
+      if (!infrastructureAddresses.some((a) => a.toLowerCase() === HOOK_MULTIPLEXER_ADDRESS.toLowerCase())) {
+        infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
+      }
       // NOTE: Smart Sessions Validator is NOT added to on-chain protectedAddresses
       // because the account needs to call it for session revocation (revokeSession
       // sends a removeSession call to the Smart Sessions contract). Smart Sessions
@@ -821,9 +1009,10 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // admin functions and all hooks' setTrustedForwarder are unprotected
       // on-chain. The SDK-side blocklist (validateTransaction) provides a
       // client-side defense, but on-chain protection requires AllowlistHook.
-      const hasHooks = policies.some(
-        (p) => p.type === "spending-limit" || p.type === "emergency-pause",
-      );
+      const hasHooks = policies.some((p) => {
+        const plugin = pluginRegistry.has(p.type) ? pluginRegistry.get(p.type) : undefined;
+        return plugin?.moduleType === "hook" && p.type !== "allowlist";
+      });
       if (hasHooks && !hasAllowlist) {
         // Inject an AllowlistHook in blocklist mode (allows everything except
         // protected infrastructure addresses) to provide on-chain protection.
@@ -853,33 +1042,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     }
 
     // Validate required addresses based on policy types
+    const chainId = this.config.chain.id;
+    const overrides = this.buildPluginAddressOverrides(moduleAddresses);
     for (const policy of policies) {
-      switch (policy.type) {
-        case "spending-limit":
-          if (!moduleAddresses.spendingLimitHook) {
-            throw new WalletCreationError(
-              "spendingLimitHook address required for spending-limit policy",
-            );
-          }
-          break;
-        case "allowlist":
-          if (!moduleAddresses.allowlistHook) {
-            throw new WalletCreationError(
-              "allowlistHook address required for allowlist policy",
-            );
-          }
-          break;
-        case "emergency-pause":
-          if (!moduleAddresses.emergencyPauseHook) {
-            throw new WalletCreationError(
-              "emergencyPauseHook address required for emergency-pause policy",
-            );
-          }
-          break;
-        case "automation":
-          throw new PolicyConfigError(
-            "automation policies are not yet supported",
-          );
+      const resolved = this.resolvePluginAddress(policy.type, chainId, moduleAddresses, overrides);
+      if (!resolved) {
+        const addressKey = policyTypeToAddressKey(policy.type);
+        throw new WalletCreationError(
+          `${addressKey} address required for ${policy.type} policy`,
+        );
       }
     }
 
@@ -932,34 +1103,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     });
 
     // Step 2: Initialize each sub-hook with per-account config
+    const chainId = this.config.chain.id;
+    const overrides = this.buildPluginAddressOverrides(moduleAddresses);
     for (const policy of policies) {
-      switch (policy.type) {
-        case "spending-limit": {
-          const hookAddress = moduleAddresses.spendingLimitHook;
-          const initData = encodeSpendingLimitInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(calls, hookAddress, initData);
-          break;
-        }
+      const plugin = pluginRegistry.get(policy.type);
+      if (plugin.moduleType !== "hook") continue; // Only hooks are sub-hooks of HMP
 
-        case "allowlist": {
-          const hookAddress = moduleAddresses.allowlistHook;
-          const initData = encodeAllowlistInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(calls, hookAddress, initData);
-          break;
-        }
-
-        case "emergency-pause": {
-          const hookAddress = moduleAddresses.emergencyPauseHook;
-          const initData = encodeEmergencyPauseInitData(policy, hookMultiPlexerAddress);
-          this.pushSubHookInitCalls(calls, hookAddress, initData);
-          break;
-        }
-
-        case "automation":
-          // AutomationExecutor is installed as a separate executor module,
-          // not as a sub-hook. Skip in hook initialization.
-          break;
-      }
+      const hookAddress = this.resolvePluginAddress(policy.type, chainId, moduleAddresses, overrides)!;
+      const initData = plugin.encodeInitData(policy, hookMultiPlexerAddress);
+      this.pushSubHookInitCalls(calls, hookAddress, initData);
     }
 
     // Step 3: Install Smart Sessions validator module BEFORE HMP is reactivated.
@@ -1029,20 +1181,16 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     moduleAddresses?: ModuleAddresses,
   ): Address[] {
     if (!moduleAddresses) return [];
+    const chainId = this.config.chain.id;
+    const overrides = this.buildPluginAddressOverrides(moduleAddresses);
     const addresses: Address[] = [];
     for (const policy of policies) {
-      switch (policy.type) {
-        case "spending-limit":
-          addresses.push(moduleAddresses.spendingLimitHook);
-          break;
-        case "allowlist":
-          addresses.push(moduleAddresses.allowlistHook);
-          break;
-        case "emergency-pause":
-          addresses.push(moduleAddresses.emergencyPauseHook);
-          break;
-        // automation is an executor, not a hook
-      }
+      const plugin = pluginRegistry.has(policy.type)
+        ? pluginRegistry.get(policy.type)
+        : undefined;
+      if (!plugin || plugin.moduleType !== "hook") continue;
+      const addr = this.resolvePluginAddress(policy.type, chainId, moduleAddresses, overrides);
+      if (addr) addresses.push(addr);
     }
     // HookMultiPlexer requires sorted arrays
     return addresses.sort((a, b) =>
@@ -1077,47 +1225,26 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     moduleAddresses?: ModuleAddresses,
   ): InstalledPolicy[] {
     if (!moduleAddresses) return [];
+    const zeroAddress: Address = "0x0000000000000000000000000000000000000000";
+    const chainId = this.config.chain.id;
+    const overrides = this.buildPluginAddressOverrides(moduleAddresses);
 
     return policies.map((policy) => {
-      switch (policy.type) {
-        case "spending-limit":
-          return {
-            moduleAddress: moduleAddresses.spendingLimitHook,
-            moduleType: 4,
-            name: "SpendingLimitHook",
-            config: policy,
-          };
-        case "allowlist":
-          return {
-            moduleAddress: moduleAddresses.allowlistHook,
-            moduleType: 4,
-            name: "AllowlistHook",
-            config: policy,
-          };
-        case "emergency-pause":
-          return {
-            moduleAddress: moduleAddresses.emergencyPauseHook,
-            moduleType: 4,
-            name: "EmergencyPauseHook",
-            config: policy,
-          };
-        case "automation":
-          return {
-            moduleAddress: moduleAddresses.automationExecutor ?? ("0x0000000000000000000000000000000000000000" as Address),
-            moduleType: 2,
-            name: "AutomationExecutor",
-            config: policy,
-          };
-        default: {
-          const _exhaustive: never = policy;
-          return {
-            moduleAddress: "0x0000000000000000000000000000000000000000" as Address,
-            moduleType: 0,
-            name: "Unknown",
-            config: _exhaustive as PolicyConfig,
-          };
-        }
+      const plugin = pluginRegistry.has(policy.type)
+        ? pluginRegistry.get(policy.type)
+        : undefined;
+      const addr = this.resolvePluginAddress(policy.type, chainId, moduleAddresses, overrides) ?? zeroAddress;
+
+      if (plugin) {
+        const installed = plugin.toInstalledPolicy(policy, addr);
+        return { ...installed, config: policy };
       }
+      return {
+        moduleAddress: addr,
+        moduleType: 0,
+        name: "Unknown",
+        config: policy,
+      };
     });
   }
 
@@ -1139,20 +1266,21 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     // Protect Smart Sessions Validator
     addresses.add(SMART_SESSIONS_VALIDATOR.toLowerCase());
 
-    // Protect all configured module addresses
+    // Protect all infrastructure module addresses from the registry
     const moduleAddresses = this.config.moduleAddresses;
-    if (moduleAddresses) {
-      if (moduleAddresses.spendingLimitHook) {
-        addresses.add(moduleAddresses.spendingLimitHook.toLowerCase());
-      }
-      if (moduleAddresses.allowlistHook) {
-        addresses.add(moduleAddresses.allowlistHook.toLowerCase());
-      }
-      if (moduleAddresses.emergencyPauseHook) {
-        addresses.add(moduleAddresses.emergencyPauseHook.toLowerCase());
-      }
-      if (moduleAddresses.automationExecutor) {
-        addresses.add(moduleAddresses.automationExecutor.toLowerCase());
+    const chainId = this.config.chain.id;
+    const overrides = moduleAddresses
+      ? this.buildPluginAddressOverrides(moduleAddresses)
+      : undefined;
+    const infraAddresses = pluginRegistry.getInfrastructureAddresses(chainId, overrides);
+    for (const addr of infraAddresses) {
+      addresses.add(addr.toLowerCase());
+    }
+
+    // Also protect any custom module addresses
+    if (moduleAddresses?.customModules) {
+      for (const addr of Object.values(moduleAddresses.customModules)) {
+        addresses.add(addr.toLowerCase());
       }
     }
 
@@ -1202,6 +1330,62 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
         `Invalid calldata: "${params.data}". Expected a 0x-prefixed hex string.`,
       );
     }
+  }
+
+  /**
+   * Resolve a plugin's deployed address with priority:
+   * 1. Legacy named field on ModuleAddresses (e.g., moduleAddresses.spendingLimitHook)
+   * 2. customModules[pluginId]
+   * 3. Plugin's defaultAddresses[chainId]
+   */
+  private resolvePluginAddress(
+    pluginId: string,
+    chainId: number,
+    moduleAddresses?: ModuleAddresses,
+    overrides?: Record<string, Address>,
+  ): Address | undefined {
+    // Check legacy named fields first
+    if (moduleAddresses) {
+      const legacyKey = policyTypeToAddressKey(pluginId);
+      const legacyAddr = (moduleAddresses as unknown as Record<string, unknown>)[legacyKey] as Address | undefined;
+      if (legacyAddr) return legacyAddr;
+
+      // Check customModules
+      const customAddr = moduleAddresses.customModules?.[pluginId];
+      if (customAddr) return customAddr;
+    }
+
+    // Check plugin defaultAddresses via registry
+    return pluginRegistry.resolveAddress(pluginId, chainId, overrides);
+  }
+
+  /**
+   * Build a plugin ID → address mapping from ModuleAddresses for
+   * the registry's override-based lookups.
+   */
+  private buildPluginAddressOverrides(
+    moduleAddresses: ModuleAddresses,
+  ): Record<string, Address> {
+    const overrides: Record<string, Address> = {};
+    if (moduleAddresses.spendingLimitHook) {
+      overrides["spending-limit"] = moduleAddresses.spendingLimitHook;
+    }
+    if (moduleAddresses.allowlistHook) {
+      overrides["allowlist"] = moduleAddresses.allowlistHook;
+    }
+    if (moduleAddresses.emergencyPauseHook) {
+      overrides["emergency-pause"] = moduleAddresses.emergencyPauseHook;
+    }
+    if (moduleAddresses.automationExecutor) {
+      overrides["automation"] = moduleAddresses.automationExecutor;
+    }
+    // Include custom modules
+    if (moduleAddresses.customModules) {
+      for (const [id, addr] of Object.entries(moduleAddresses.customModules)) {
+        overrides[id] = addr;
+      }
+    }
+    return overrides;
   }
 
   private getWalletClient(walletAddress: Address): Erc7579SmartAccountClient {
