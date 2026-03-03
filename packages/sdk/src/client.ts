@@ -291,13 +291,18 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
           moduleAddresses,
           emptyHMP.address,
         );
+
+        // 9. Reconnect after deployment to clear cached factory data.
+        //    The initial smartAccountClient includes initCode (factory data)
+        //    which causes subsequent UserOps to fail with "already deployed".
+        await this.connectWallet(safeAccount.address, ownerKey);
       }
 
       return {
         address: safeAccount.address,
         owner: params.owner,
         chain: this.config.chain,
-        isDeployed: policies.length > 0, // Deployed if first UserOp was sent
+        isDeployed: policies.length > 0,
         policies: this.mapPoliciesToInstalled(policies, moduleAddresses),
         sessions: [],
       };
@@ -702,7 +707,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       transport: http(this.config.rpcUrl),
     });
 
-    return guardianClient.writeContract(request);
+    const hash = await guardianClient.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return hash;
   }
 
   /**
@@ -732,7 +739,9 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       transport: http(this.config.rpcUrl),
     });
 
-    return guardianClient.writeContract(request);
+    const hash = await guardianClient.writeContract(request);
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return hash;
   }
 
   // ─── Private Helpers ──────────────────────────────────────────
