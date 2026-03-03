@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.5
+
+### Patch Changes
+
+- fix(sdk): clear factory data cache after deployment & wait for pause tx receipt,chore: docs, security audit fixes, CI, SDK deployment fix, and v0.1.4 release
+
 ## 0.1.4
 
 ### Patch Changes

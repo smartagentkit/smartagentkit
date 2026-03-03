@@ -1,6 +1,6 @@
 {
   "name": "payment-distribution-bot-example",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "Example: Scheduled payroll bot using SmartAgentKit (no LLM)",
   "type": "module",
