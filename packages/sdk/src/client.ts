@@ -970,9 +970,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     });
 
     // Send as a single batched UserOp (also triggers Safe deployment)
-    await client.sendTransaction({
+    const hash = await client.sendTransaction({
       calls,
     } as Parameters<typeof client.sendTransaction>[0]);
+
+    // Wait for 2 confirmations to ensure state propagation across RPC nodes
+    await this.publicClient.waitForTransactionReceipt({
+      hash,
+      confirmations: 2,
+    });
   }
 
   /**
