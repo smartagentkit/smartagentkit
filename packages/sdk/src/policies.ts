@@ -174,6 +174,23 @@ export function encodeAllowlistInitData(
     );
   }
 
+  // For targets with no selector (wildcard), register BOTH the wildcard
+  // selector and 0x00000000 (plain ETH transfer). The on-chain AllowlistHook
+  // checks the exact selector extracted from calldata — for empty calldata
+  // (plain ETH sends), the extracted selector is 0x00000000, not the wildcard.
+  const ethTransferSelector: Hex = "0x00000000";
+  const encodedTargets: { target: Address; selector: `0x${string}` }[] = [];
+  for (const t of policy.targets) {
+    if (t.selector) {
+      // Explicit selector — single entry
+      encodedTargets.push({ target: t.address, selector: t.selector as `0x${string}` });
+    } else {
+      // Wildcard — register both wildcard and plain ETH transfer selectors
+      encodedTargets.push({ target: t.address, selector: wildcardSelector as `0x${string}` });
+      encodedTargets.push({ target: t.address, selector: ethTransferSelector as `0x${string}` });
+    }
+  }
+
   // Encode as: abi.encode(address, uint8, (address, bytes4)[], address[])
   return encodeAbiParameters(
     parseAbiParameters(
@@ -182,10 +199,7 @@ export function encodeAllowlistInitData(
     [
       trustedForwarder,
       mode,
-      policy.targets.map((t) => ({
-        target: t.address,
-        selector: (t.selector ?? wildcardSelector) as `0x${string}`,
-      })),
+      encodedTargets,
       protectedAddresses,
     ],
   );
