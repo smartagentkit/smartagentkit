@@ -1,5 +1,12 @@
 # smartagentkit
 
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies
+  - @smartagentkit/sdk@0.1.7
+
 ## 0.1.6
 
 ### Patch Changes
