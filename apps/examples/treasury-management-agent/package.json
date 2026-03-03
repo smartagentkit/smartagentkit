@@ -1,6 +1,6 @@
 {
   "name": "treasury-management-agent-example",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "description": "Example: Claude-powered treasury rebalancer using SmartAgentKit + LangChain",
   "type": "module",
