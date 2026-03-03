@@ -55,6 +55,7 @@ import {
   SMART_SESSIONS_VALIDATOR,
   MODULE_ONINSTALL_ABI,
   MODULE_ONUNINSTALL_ABI,
+  INSTALL_MODULE_ABI,
   SPENDING_LIMIT_HOOK_ABI,
   EMERGENCY_PAUSE_HOOK_ABI,
 } from "./constants.js";
@@ -426,28 +427,35 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       // 3. Compute the permission ID
       const permissionId = computePermissionId(session);
 
-      // 4. Install Smart Sessions validator if not already installed
+      // 4. Verify Smart Sessions validator is installed.
+      // It is pre-installed during initializePolicies (before hooks are activated).
+      // For wallets without policies, or older wallets that didn't pre-install it,
+      // we attempt installation here (which may fail if hooks block module management).
       const smartSessionsModule = getSmartSessionsModule();
+      let ssInstalled = false;
       try {
-        const isInstalled = await client.isModuleInstalled({
+        ssInstalled = await client.isModuleInstalled({
           type: "validator",
           address: smartSessionsModule.address,
           context: "0x",
         });
-        if (!isInstalled) {
+      } catch {
+        // isModuleInstalled failed — assume not installed
+      }
+      if (!ssInstalled) {
+        try {
           await client.installModule({
             type: "validator",
             address: smartSessionsModule.address,
             context: smartSessionsModule.initData,
           });
+        } catch (installError) {
+          throw new SessionError(
+            "Smart Sessions validator could not be installed. " +
+              "If the wallet has hooks, the module must be pre-installed during wallet creation. " +
+              "Recreate the wallet with the latest SDK to enable session key support.",
+          );
         }
-      } catch {
-        // If check fails, try installing anyway
-        await client.installModule({
-          type: "validator",
-          address: smartSessionsModule.address,
-          context: smartSessionsModule.initData,
-        });
       }
 
       // 5. Get the enable session details (computes the hash the owner must sign)
@@ -782,9 +790,14 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       if (moduleAddresses.automationExecutor) {
         infrastructureAddresses.push(moduleAddresses.automationExecutor);
       }
-      // Also protect the HookMultiPlexer and Smart Sessions Validator
+      // Also protect the HookMultiPlexer
       infrastructureAddresses.push(HOOK_MULTIPLEXER_ADDRESS);
-      infrastructureAddresses.push(SMART_SESSIONS_VALIDATOR);
+      // NOTE: Smart Sessions Validator is NOT added to on-chain protectedAddresses
+      // because the account needs to call it for session revocation (revokeSession
+      // sends a removeSession call to the Smart Sessions contract). Smart Sessions
+      // has its own access controls: session enabling requires the owner's signature,
+      // and revocation only reduces permissions. SDK-level validateTransaction still
+      // blocks agent-initiated calls to Smart Sessions.
 
       let hasAllowlist = false;
       for (const policy of policies) {
@@ -949,7 +962,30 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
       }
     }
 
-    // Step 3: Reinstall HMP with all globalHooks sorted ascending.
+    // Step 3: Install Smart Sessions validator module BEFORE HMP is reactivated.
+    // This must happen while the HMP is empty (no sub-hooks) because the
+    // AllowlistHook's onInstallModule handler blocks all module management
+    // via UserOps. Installing here — after HMP.onUninstall and sub-hook init
+    // but before HMP.onInstall — bypasses the block since the HMP preCheck
+    // passes trivially with no registered hooks.
+    const walletAddress = client.account?.address;
+    if (walletAddress) {
+      calls.push({
+        to: walletAddress,
+        value: 0n,
+        data: encodeFunctionData({
+          abi: INSTALL_MODULE_ABI,
+          functionName: "installModule",
+          args: [
+            BigInt(1), // MODULE_TYPE_VALIDATOR
+            SMART_SESSIONS_VALIDATOR,
+            "0x", // empty initData — no sessions to pre-enable
+          ],
+        }),
+      });
+    }
+
+    // Step 4: Reinstall HMP with all globalHooks sorted ascending.
     // Using onInstall (not addHook) bypasses the ERC-7484 registry
     // attestation check that blocks our custom hooks.
     const fullHMP = getHookMultiPlexer({
