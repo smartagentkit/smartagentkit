@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.7
+
+### Patch Changes
+
+- fix(sdk): wait for confirmations after initializePolicies UserOp
+
 ## 0.1.6
 
 ### Patch Changes
