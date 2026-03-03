@@ -708,7 +708,11 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     });
 
     const hash = await guardianClient.writeContract(request);
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    // Wait for 2 confirmations to ensure state propagation across RPC nodes
+    await this.publicClient.waitForTransactionReceipt({
+      hash,
+      confirmations: 2,
+    });
     return hash;
   }
 
@@ -740,7 +744,11 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
     });
 
     const hash = await guardianClient.writeContract(request);
-    await this.publicClient.waitForTransactionReceipt({ hash });
+    // Wait for 2 confirmations to ensure state propagation across RPC nodes
+    await this.publicClient.waitForTransactionReceipt({
+      hash,
+      confirmations: 2,
+    });
     return hash;
   }
 
