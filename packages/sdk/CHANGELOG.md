@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.9
+
+### Patch Changes
+
+- 75078c2: fix: pre-install Smart Sessions validator during wallet creation to enable session keys on wallets with hooks
+
 ## 0.1.8
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@smartagentkit/testing",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Mock client for SmartAgentKit — run examples without funded wallets or deployed contracts",
   "license": "MIT",
   "author": "SmartAgentKit Contributors",
