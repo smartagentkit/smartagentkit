@@ -1,5 +1,13 @@
 # arbitrage-agent-example
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies
+  - @smartagentkit/sdk@0.1.5
+  - @smartagentkit/testing@0.1.5
+
 ## 0.1.4
 
 ### Patch Changes

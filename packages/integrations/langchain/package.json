@@ -1,6 +1,6 @@
 {
   "name": "@smartagentkit/langchain",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "LangChain integration for SmartAgentKit — AI agent smart wallet tools",
   "license": "MIT",
   "author": "SmartAgentKit Contributors",
