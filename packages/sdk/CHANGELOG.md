@@ -1,5 +1,11 @@
 # @smartagentkit/sdk
 
+## 0.1.8
+
+### Patch Changes
+
+- fix(sdk): register 0x00000000 selector for wildcard allowlist targets
+
 ## 0.1.7
 
 ### Patch Changes
