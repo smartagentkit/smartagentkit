@@ -1,6 +1,6 @@
 {
   "name": "monitoring-alert-agent-example",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "Example: Guardian watchdog that monitors wallets and auto-pauses on anomalies",
   "type": "module",

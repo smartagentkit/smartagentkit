@@ -1,5 +1,14 @@
 # treasury-management-agent-example
 
+## 0.1.10
+
+### Patch Changes
+
+- Updated dependencies [e701708]
+  - @smartagentkit/sdk@0.1.10
+  - @smartagentkit/testing@0.1.10
+  - @smartagentkit/langchain@0.1.10
+
 ## 0.1.9
 
 ### Patch Changes
