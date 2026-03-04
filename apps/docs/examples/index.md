@@ -11,6 +11,7 @@ SmartAgentKit ships with five runnable example projects that demonstrate differe
 | [Payment Distribution](/examples/payment-distribution) | None | `payment-agent` | Scheduled payouts, allowlist | Intermediate |
 | [Monitoring & Alerts](/examples/monitoring-alerts) | None | `minimal` | Guardian pattern, auto-pause | Intermediate |
 | [Arbitrage Agent](/examples/arbitrage-agent) | None | `defi-trader` | Session keys, atomic swaps | Advanced |
+| [Policy Playground](/examples/policy-playground) | None | Custom | Plugin architecture, custom policies | Beginner |
 
 ## Mock Mode
 

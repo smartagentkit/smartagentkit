@@ -1,5 +1,6 @@
 import type { Address } from "viem";
 import type { ModuleAddresses } from "./types.js";
+import { pluginRegistry } from "./plugins/index.js";
 import baseSepoliaDeployment from "./deployments/base-sepolia.json";
 import sepoliaDeployment from "./deployments/sepolia.json";
 
@@ -21,6 +22,14 @@ interface DeploymentJson {
   [key: string]: unknown;
 }
 
+/** Map from JSON field name to plugin ID */
+const DEPLOYMENT_FIELD_TO_PLUGIN: Record<string, string> = {
+  spendingLimitHook: "spending-limit",
+  allowlistHook: "allowlist",
+  emergencyPauseHook: "emergency-pause",
+  automationExecutor: "automation",
+};
+
 function loadDeployment(json: DeploymentJson): void {
   // Only register if addresses are actually populated (non-empty)
   if (json.spendingLimitHook && json.spendingLimitHook !== "") {
@@ -32,6 +41,14 @@ function loadDeployment(json: DeploymentJson): void {
         | Address
         | undefined,
     };
+
+    // Also populate plugin defaultAddresses via registry
+    for (const [field, pluginId] of Object.entries(DEPLOYMENT_FIELD_TO_PLUGIN)) {
+      const addr = json[field] as string;
+      if (addr && addr !== "") {
+        pluginRegistry.setDefaultAddress(pluginId, json.chainId, addr as Address);
+      }
+    }
   }
 }
 

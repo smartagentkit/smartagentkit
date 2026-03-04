@@ -24,6 +24,7 @@ interface ModuleAddresses {
   allowlistHook: Address;
   emergencyPauseHook: Address;
   automationExecutor?: Address;
+  customModules?: Record<string, Address>; // Plugin ID -> address
 }
 ```
 
@@ -238,6 +239,39 @@ interface ActiveSession {
   actions: SessionAction[];
   expiresAt: number;
   isActive: boolean;
+}
+```
+
+## Plugin Types
+
+### `PolicyPlugin<TConfig>`
+
+See [Policies API](/api/sdk/policies#plugin-architecture) for full documentation.
+
+### `ModuleType`
+
+```typescript
+type ModuleType = "hook" | "executor" | "validator" | "fallback";
+```
+
+### `InstallPolicyParams`
+
+```typescript
+interface InstallPolicyParams {
+  plugin: PolicyPlugin | string; // Plugin object or registered ID
+  hookAddress?: Address;          // Override the hook address
+  config: unknown;                // Plugin-specific config
+}
+```
+
+### `InstallRawParams`
+
+```typescript
+interface InstallRawParams {
+  hookAddress: Address;
+  moduleType: "hook" | "executor" | "validator" | "fallback";
+  initData: Hex;
+  abi?: readonly Record<string, unknown>[];
 }
 ```
 

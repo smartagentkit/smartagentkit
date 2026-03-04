@@ -170,6 +170,50 @@ Each task defines:
 - **`cooldown`** — Minimum seconds between executions.
 - **`maxExecutions`** — Total number of allowed executions (0 = unlimited).
 
+## Custom Policies
+
+SmartAgentKit supports custom policy plugins. You can write your own Solidity hook, define a plugin object, and register it with the SDK. See the [Custom Policies Guide](/guides/custom-policies) for a full walkthrough.
+
+```typescript
+import { pluginRegistry } from "@smartagentkit/sdk";
+
+pluginRegistry.register(myCustomPlugin);
+
+const wallet = await client.createWallet({
+  owner: "0x...",
+  ownerPrivateKey: "0x...",
+  policies: [
+    { type: "my-custom-hook", /* ... */ } as any,
+  ],
+});
+```
+
+## Using Your Own Deployments
+
+If you've deployed hooks at custom addresses, pass them via `moduleAddresses`:
+
+```typescript
+const client = new SmartAgentKitClient({
+  chain: baseSepolia,
+  rpcUrl: "...",
+  bundlerUrl: "...",
+  moduleAddresses: {
+    spendingLimitHook: "0xMyAddress...",
+    allowlistHook: "0xMyAddress...",
+    emergencyPauseHook: "0xMyAddress...",
+    customModules: {
+      "my-custom-hook": "0xMyHookAddress...",
+    },
+  },
+});
+```
+
+Or set defaults on the plugin registry:
+
+```typescript
+pluginRegistry.setDefaultAddress("my-custom-hook", 84532, "0xMyHookAddress...");
+```
+
 ## Policy Encoding (Advanced)
 
 For manual encoding of policy init data (useful for custom integrations):

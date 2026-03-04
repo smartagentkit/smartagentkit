@@ -113,6 +113,49 @@ pnpm docs:build    # Production build
 pnpm docs:preview  # Preview production build
 ```
 
+## Contributing a Policy Plugin
+
+New policy plugins are one of the most impactful contributions you can make. SmartAgentKit's plugin architecture is designed to make adding policies straightforward.
+
+### Getting Started
+
+1. Run the [Policy Playground](/examples/policy-playground) to understand how plugins work
+2. Read the [Custom Policies Guide](/guides/custom-policies) for the full walkthrough
+3. Pick an idea from the wishlist below, or propose your own
+
+### Policy Wishlist
+
+These are policy ideas that would be useful to the community. Each is a self-contained project suitable for a first contribution:
+
+| Policy | Description | Module Type | Difficulty |
+|---|---|---|---|
+| **VelocityLimitPolicy** | Rate-limit the number of transactions per time window (e.g., max 10 txs/hour) | Hook | Beginner |
+| **USDOracleBudgetPolicy** | Spending limits denominated in USD using a Chainlink price feed | Hook | Intermediate |
+| **GasCapPolicy** | Cap the total gas the wallet can consume per time window | Hook | Intermediate |
+| **MultiRoleSessionPolicy** | Named roles (admin, trader, viewer) with different session permissions | Validator | Advanced |
+| **ChainRestrictedPolicy** | Block cross-chain bridging by blocking known bridge contract addresses | Hook | Beginner |
+| **FunctionSelectorPolicy** | Fine-grained per-function rate limits (e.g., max 5 `swap()` calls per hour) | Hook | Intermediate |
+
+### What a Policy Contribution Includes
+
+A complete policy contribution has:
+
+1. **Solidity hook** in `packages/contracts/src/modules/` extending `ERC7579HookDestruct`
+2. **Foundry tests** in `packages/contracts/test/` including edge cases and fuzz tests
+3. **TypeScript plugin** in `packages/sdk/src/plugins/` implementing `PolicyPlugin`
+4. **Registration** in `packages/sdk/src/plugins/index.ts`
+5. **Config type** added to the `PolicyConfig` union in `packages/sdk/src/types.ts`
+6. **SDK tests** in `packages/sdk/src/__tests__/plugins.test.ts`
+7. **Documentation** — either a new guide or an addition to [Policy Configuration](/guides/policy-configuration)
+8. **Changeset** via `pnpm changeset`
+
+### Labels
+
+- `good-first-issue` — Policy plugins that are self-contained and well-scoped
+- `policy-plugin` — Any PR that adds or modifies a policy plugin
+- `needs-solidity` — Contributions that require a new Solidity contract
+- `needs-tests` — PRs that need test coverage added
+
 ## Reporting Issues
 
 Open an issue on [GitHub](https://github.com/smartagentkit/smartagentkit/issues) with:

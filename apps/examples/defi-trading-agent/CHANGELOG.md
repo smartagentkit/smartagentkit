@@ -1,5 +1,41 @@
 # defi-trading-agent-example
 
+## 0.1.10
+
+### Patch Changes
+
+- Updated dependencies [e701708]
+  - @smartagentkit/sdk@0.1.10
+  - @smartagentkit/testing@0.1.10
+  - @smartagentkit/langchain@0.1.10
+
+## 0.1.9
+
+### Patch Changes
+
+- Updated dependencies [75078c2]
+  - @smartagentkit/sdk@0.1.9
+  - @smartagentkit/langchain@0.1.9
+  - @smartagentkit/testing@0.1.9
+
+## 0.1.8
+
+### Patch Changes
+
+- Updated dependencies
+  - @smartagentkit/sdk@0.1.8
+  - @smartagentkit/langchain@0.1.8
+  - @smartagentkit/testing@0.1.8
+
+## 0.1.7
+
+### Patch Changes
+
+- Updated dependencies
+  - @smartagentkit/sdk@0.1.7
+  - @smartagentkit/langchain@0.1.7
+  - @smartagentkit/testing@0.1.7
+
 ## 0.1.6
 
 ### Patch Changes

@@ -187,6 +187,23 @@ export const HOOK_TYPE_VALUE = 2;
 export const HOOK_TYPE_SIG = 3;
 export const HOOK_TYPE_TARGET = 4;
 
+// ─── ERC-7579 Account ABIs ──────────────────────────────────────
+
+/** ERC-7579 installModule ABI (on the smart account itself) */
+export const INSTALL_MODULE_ABI = [
+  {
+    name: "installModule",
+    type: "function",
+    inputs: [
+      { name: "moduleType", type: "uint256" },
+      { name: "module", type: "address" },
+      { name: "initData", type: "bytes" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
 // ─── Module Lifecycle ABIs ──────────────────────────────────────
 
 /** ERC-7579 onInstall ABI (common to all modules) */

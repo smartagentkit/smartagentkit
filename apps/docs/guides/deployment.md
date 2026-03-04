@@ -1,6 +1,54 @@
 # Deployment
 
-This guide covers the deployed contract addresses, how to deploy SmartAgentKit modules to a new chain, gas costs, and contract verification.
+This guide covers deployment flexibility, deployed contract addresses, how to deploy SmartAgentKit modules to a new chain, gas costs, and contract verification.
+
+## Deployment Flexibility
+
+SmartAgentKit is chain-agnostic and does not rely on centralized or "official" deployments. The SDK accepts arbitrary hook contract addresses and works with any deployed instance of the modules.
+
+**Key points:**
+
+- **No official deployments required.** You can deploy your own instances of all hook contracts.
+- **Built-in defaults are convenience only.** The SDK ships with default addresses for Base Sepolia and Sepolia testnets. These are not privileged — they are the same contracts you would deploy yourself.
+- **Any EVM chain is supported.** Deploy the hook contracts to your target chain and pass the addresses to the SDK.
+- **Production deployments should be your own.** Deploy, audit, and verify your own hook instances for production use. Do not rely on testnet defaults.
+
+```typescript
+// Deploy your own hooks to any chain, then pass the addresses
+const client = new SmartAgentKitClient({
+  chain: myChain,
+  rpcUrl: "...",
+  bundlerUrl: "...",
+  moduleAddresses: {
+    spendingLimitHook: "0xYourSpendingLimitHook",
+    allowlistHook: "0xYourAllowlistHook",
+    emergencyPauseHook: "0xYourEmergencyPauseHook",
+    customModules: {
+      "my-custom-hook": "0xYourCustomHook",
+    },
+  },
+});
+```
+
+You can also set defaults on the plugin registry at runtime:
+
+```typescript
+import { pluginRegistry } from "@smartagentkit/sdk";
+
+pluginRegistry.setDefaultAddress("spending-limit", myChain.id, "0xYourSpendingLimitHook");
+pluginRegistry.setDefaultAddress("allowlist", myChain.id, "0xYourAllowlistHook");
+pluginRegistry.setDefaultAddress("emergency-pause", myChain.id, "0xYourEmergencyPauseHook");
+```
+
+Or install a policy with an explicit hook address, bypassing all address resolution:
+
+```typescript
+await client.policies.install(wallet, {
+  plugin: "allowlist",
+  hookAddress: "0xYourDeployedHook",
+  config: { type: "allowlist", mode: "allow", targets: [...] },
+}, ownerKey);
+```
 
 ## Deployed Contracts
 

@@ -18,6 +18,8 @@ export type {
   ExecuteParams,
   ExecuteBatchParams,
   InstalledPolicy,
+  InstallPolicyParams,
+  InstallRawParams,
   ModuleAddresses,
   SignerKey,
   MnemonicCredential,
@@ -31,6 +33,18 @@ export {
   encodeEmergencyPauseInitData,
 } from "./policies.js";
 export type { EncodedPolicy } from "./policies.js";
+// ─── Plugin Architecture ─────────────────────────────────────
+export type { PolicyPlugin, ModuleType } from "./plugins/types.js";
+export {
+  PolicyPluginRegistry,
+  pluginRegistry,
+} from "./plugins/registry.js";
+export {
+  spendingLimitPlugin,
+  allowlistPlugin,
+  emergencyPausePlugin,
+  automationPlugin,
+} from "./plugins/index.js";
 export {
   NATIVE_TOKEN,
   ENTRYPOINT_V07,

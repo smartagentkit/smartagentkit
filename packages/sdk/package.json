@@ -1,6 +1,6 @@
 {
   "name": "@smartagentkit/sdk",
-  "version": "0.1.6",
+  "version": "0.1.10",
   "description": "Deploy and manage policy-governed smart wallets for AI agents",
   "license": "MIT",
   "author": "SmartAgentKit Contributors",

@@ -1,5 +1,25 @@
 # Security Model
 
+## What Policies Do — And Don't — Protect Against
+
+**Policies protect against:**
+
+- **Unrestricted spending.** SpendingLimitHook caps per-token amounts over configurable time windows.
+- **Calling unauthorized contracts.** AllowlistHook restricts which addresses and function selectors the wallet can call.
+- **Complete fund drain.** Policies are enforced on-chain — a compromised agent or modified SDK cannot bypass them.
+- **Agent key compromise.** Session keys limit scope to specific contracts/selectors and expire automatically.
+- **Runaway agents.** EmergencyPauseHook provides an instant circuit breaker to freeze all wallet activity.
+
+**Policies do not protect against:**
+
+- **Protocol-level exploits.** If a contract your agent interacts with has a vulnerability, policies cannot prevent exploitation through normal-looking calls.
+- **All forms of value movement.** Token wrapping, flash loans, and delegate calls are not tracked by spending limits.
+- **Price manipulation.** Spending limits are denominated in token amounts, not USD. A token's price can change within a window.
+- **Owner key compromise.** The owner has full control by design. If the owner key is compromised, policies can be removed.
+- **Replacing audits.** Custom hook contracts need their own security review. The SDK does not audit user-deployed hooks.
+
+This is an honest accounting. SmartAgentKit significantly reduces the attack surface for AI agent wallets, but it is not a substitute for defense in depth, code audits, and operational security.
+
 ## Threat Model
 
 SmartAgentKit is designed for a specific threat: **a compromised or malfunctioning AI agent** that has access to a wallet. The policy system limits what damage the agent can do.
