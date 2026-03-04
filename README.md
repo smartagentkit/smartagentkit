@@ -19,48 +19,6 @@ AI agents need wallets to interact with blockchains. But giving an LLM unrestric
 
 SmartAgentKit solves this by constraining agent behavior at the smart contract level. Even if the agent is compromised, the on-chain policies hold.
 
-## Core Features
-
-- **Spending Limits** — Per-token caps over rolling time windows (e.g., 1 ETH per day)
-- **Allowlist / Blocklist** — Restrict which contracts and function selectors the agent can call
-- **Emergency Pause** — Circuit breaker to freeze all wallet activity instantly
-- **Session Keys** — Scoped, time-limited key pairs via Smart Sessions (Rhinestone + Biconomy)
-- **Custom Policies** — Plugin architecture for writing and registering your own policy hooks
-- **LangChain Integration** — Drop-in tools for AI agent frameworks
-- **CLI** — Create wallets, manage policies, and monitor status from the command line
-- **Mock Testing** — Full in-memory mock client for testing without deploying or funding wallets
-
-## Deployment Options
-
-SmartAgentKit is chain-agnostic and does not rely on centralized deployments.
-
-- **No official deployments required.** The SDK works with any deployed instance of the hook contracts.
-- **Deploy your own hooks.** Use the provided Foundry deploy script or deploy manually to any EVM chain.
-- **Arbitrary hook addresses.** Pass any contract address via `moduleAddresses` or `hookAddress` — the SDK does not hardcode addresses.
-- **Built-in defaults for convenience.** The SDK ships with default addresses for Base Sepolia and Sepolia testnets. These are convenience defaults, not requirements.
-- **Production deployments should use your own contracts.** Deploy, audit, and verify your own hook instances for production use.
-
-```typescript
-// Use your own deployed hooks
-const client = new SmartAgentKitClient({
-  chain: myChain,
-  rpcUrl: "...",
-  bundlerUrl: "...",
-  moduleAddresses: {
-    spendingLimitHook: "0xYourSpendingLimitHook",
-    allowlistHook: "0xYourAllowlistHook",
-    emergencyPauseHook: "0xYourEmergencyPauseHook",
-  },
-});
-
-// Or install a policy with an explicit hook address
-await client.policies.install(wallet, {
-  plugin: "allowlist",
-  hookAddress: "0xYourDeployedHook",
-  config: { type: "allowlist", mode: "allow", targets: [...] },
-}, ownerKey);
-```
-
 ## Architecture
 
 ```
@@ -82,6 +40,34 @@ await client.policies.install(wallet, {
 │  │  └─ YourCustomHook (plugin)         │         │
 │  └─────────────────────────────────────┘         │
 └─────────────────────────────────────────────────┘
+```
+
+The SDK builds ERC-4337 UserOperations and submits them through a bundler. The bundler sends them to the EntryPoint contract, which calls your Safe account. The Safe7579 adapter routes execution through the HookMultiPlexer, which runs every installed policy hook before and after each call. If any hook reverts, the entire UserOperation fails.
+
+ERC-7579 accounts support only one hook — the HookMultiPlexer fills that slot and routes to all individual policy hooks. This is a hard architectural requirement.
+
+## Deployment Options
+
+SmartAgentKit is chain-agnostic and does not rely on centralized deployments.
+
+- **No official deployments required.** The SDK works with any deployed instance of the hook contracts.
+- **Deploy your own hooks.** Use the provided Foundry deploy script or deploy manually to any EVM chain.
+- **Arbitrary hook addresses.** Pass any contract address via `moduleAddresses` or `hookAddress` — the SDK does not hardcode addresses.
+- **Built-in defaults for convenience.** The SDK ships with default addresses for Base Sepolia and Sepolia testnets. These are convenience defaults, not requirements.
+- **Production deployments should use your own contracts.** Deploy, audit, and verify your own hook instances for production use.
+
+```typescript
+// Use your own deployed hooks on any chain
+const client = new SmartAgentKitClient({
+  chain: myChain,
+  rpcUrl: "...",
+  bundlerUrl: "...",
+  moduleAddresses: {
+    spendingLimitHook: "0xYourSpendingLimitHook",
+    allowlistHook: "0xYourAllowlistHook",
+    emergencyPauseHook: "0xYourEmergencyPauseHook",
+  },
+});
 ```
 
 ## Quickstart
@@ -157,51 +143,6 @@ sak status --wallet 0xWalletAddress
 sak pause --wallet 0xWalletAddress --guardian-key 0xGuardianKey
 ```
 
-## Policy Playground
-
-The [Policy Playground](apps/examples/policy-playground) is a hands-on example that demonstrates the plugin architecture. It walks through registering a custom plugin, validating config, encoding init data, resolving addresses, and creating a wallet with custom policies.
-
-```bash
-# Clone the repo and run the playground
-git clone https://github.com/smartagentkit/smartagentkit.git
-cd smartagentkit
-pnpm install && pnpm build
-
-cd apps/examples/policy-playground
-pnpm start:mock
-```
-
-The playground shows:
-- How to define a custom `PolicyPlugin` (a `TargetBlockerPlugin` that blocks calls to a single address)
-- Registering the plugin with `pluginRegistry`
-- Config validation, init data encoding, and address resolution
-- Creating wallets with both built-in and custom policies
-
-This is the best starting point for understanding how to extend SmartAgentKit with your own policies.
-
-## Writing Custom Policies
-
-SmartAgentKit has a plugin architecture for policies. You can write your own Solidity hook contract, define a TypeScript plugin, and register it with the SDK — no changes to SDK internals required.
-
-```typescript
-import { pluginRegistry } from "@smartagentkit/sdk";
-
-// Register your custom plugin
-pluginRegistry.register(myCustomPlugin);
-
-// Use it like any built-in policy
-const wallet = await client.createWallet({
-  owner: "0x...",
-  ownerPrivateKey: "0x...",
-  policies: [
-    { type: "spending-limit", limits: [...] },
-    { type: "my-custom-hook", /* ... */ } as any,
-  ],
-});
-```
-
-See the [Custom Policies Guide](apps/docs/guides/custom-policies.md) for a full walkthrough including Solidity contract, TypeScript plugin definition, deployment, and testing.
-
 ## Policy Modules
 
 ### SpendingLimitHook
@@ -245,7 +186,7 @@ Circuit breaker with optional auto-unpause timeout.
 }
 ```
 
-## Presets
+### Presets
 
 Pre-configured policy bundles for common use cases:
 
@@ -258,45 +199,99 @@ Pre-configured policy bundles for common use cases:
 
 All presets default guardian to the owner address. Override with `presetParams: { guardian: "0x..." }`.
 
+## Installing Custom Policies
+
+SmartAgentKit has a plugin architecture for policies. You can write your own Solidity hook, define a TypeScript plugin, and register it with the SDK — no changes to SDK internals required.
+
+### Install via Plugin
+
+Register a plugin and install it with an explicit hook address:
+
+```typescript
+import { pluginRegistry } from "@smartagentkit/sdk";
+
+// Register your custom plugin
+pluginRegistry.register(myCustomPlugin);
+
+// Install with an explicit hook address
+await client.policies.install(wallet, {
+  plugin: "my-custom-hook",
+  hookAddress: "0xYourDeployedHook",
+  config: { type: "my-custom-hook", /* plugin-specific config */ },
+}, ownerKey);
+```
+
+If the plugin has `defaultAddresses` for the current chain, `hookAddress` can be omitted — the SDK resolves the address from the registry. Otherwise, `hookAddress` is required.
+
+Plugins can also be used at wallet creation time:
+
+```typescript
+const wallet = await client.createWallet({
+  owner: "0x...",
+  ownerPrivateKey: "0x...",
+  policies: [
+    { type: "spending-limit", limits: [...] },
+    { type: "my-custom-hook", /* ... */ } as any,
+  ],
+  // Provide addresses for custom hooks
+  moduleAddresses: {
+    ...existingAddresses,
+    customModules: { "my-custom-hook": "0xYourDeployedHook" },
+  },
+});
+```
+
+### Install Raw (No Plugin)
+
+For external or community hooks where you don't have a plugin definition, use `installRaw()` with pre-encoded init data:
+
+```typescript
+await client.policies.installRaw(wallet, {
+  hookAddress: "0xExternalHook",
+  moduleType: "hook",
+  initData: "0x...", // Pre-encoded onInstall data
+}, ownerKey);
+```
+
+This skips plugin resolution and config validation entirely. You are responsible for encoding the init data correctly. This is the escape hatch for any ERC-7579 hook contract.
+
+See the [Custom Policies Guide](https://smartagentkit.github.io/smartagentkit/guides/custom-policies) for the full walkthrough including Solidity contracts, TypeScript plugin definitions, deployment, and testing.
+
+## Policy Playground
+
+The [Policy Playground](apps/examples/policy-playground) demonstrates the plugin architecture end-to-end. It defines a custom `TargetBlockerPlugin`, registers it, validates config, encodes init data, resolves addresses, and creates a wallet with both built-in and custom policies.
+
+```bash
+# Clone the repo and run the playground
+git clone https://github.com/smartagentkit/smartagentkit.git
+cd smartagentkit
+pnpm install && pnpm build
+
+cd apps/examples/policy-playground
+pnpm start:mock
+```
+
+The playground runs through 7 steps and prints the result of each operation. No chain connection, funding, or API keys required in mock mode.
+
+Start with `src/custom-plugin.ts` to see a complete `PolicyPlugin` implementation, then read `src/playground.ts` to see how it integrates with the SDK.
+
 ## What Policies Do — And Don't — Protect Against
 
-Policies:
-- Restrict the scope of transactions an agent can execute
+Policies **do**:
 - Enforce spending caps, target restrictions, and pause states on-chain via hooks
-- Cannot be bypassed by a compromised agent or a modified SDK — enforcement is at the EVM level
+- Restrict which contracts and function selectors the agent can call
+- Limit blast radius of a compromised agent or session key
 - Provide a circuit breaker (emergency pause) for immediate response to incidents
+- Cannot be bypassed by a compromised agent or a modified SDK — enforcement is at the EVM level
 
 Policies do **not**:
-- Protect against protocol-level exploits in the contracts your agent interacts with
+- Protect against protocol-level exploits in contracts your agent interacts with
 - Track all forms of value movement (e.g., token wrapping, flash loans, delegate calls)
+- Automatically track USD-denominated value (limits are in token amounts)
 - Replace security audits of your own hook contracts or application logic
 - Prevent the wallet owner from removing policies (the owner has full override control by design)
 
-See the [Security Model](apps/docs/security/model.md) for the full threat model and known limitations.
-
-## Wanted Policies (Good First Contributions)
-
-The plugin architecture makes it straightforward to add new policy types. The following are ideas for policies that would be useful — each is a good candidate for a first contribution:
-
-| Policy Idea | Description | Module Type |
-|---|---|---|
-| **VelocityLimitPolicy** | Rate-limit the number of transactions per time window (e.g., max 10 txs/hour) | Hook |
-| **USDOracleBudgetPolicy** | Spending limits denominated in USD using a Chainlink price feed | Hook |
-| **GasCapPolicy** | Cap the total gas the wallet can consume per time window | Hook |
-| **MultiRoleSessionPolicy** | Define named roles (admin, trader, viewer) with different session permissions | Validator |
-| **ChainRestrictedPolicy** | Restrict cross-chain bridging by blocking known bridge contract addresses | Hook |
-| **FunctionSelectorPolicy** | Fine-grained per-function limits (e.g., max 5 `swap()` calls per hour) | Hook |
-
-To contribute a new policy:
-
-1. Write the Solidity hook in `packages/contracts/src/modules/`
-2. Add Foundry tests in `packages/contracts/test/`
-3. Create the TypeScript plugin in `packages/sdk/src/plugins/`
-4. Register it in `packages/sdk/src/plugins/index.ts`
-5. Add tests in `packages/sdk/src/__tests__/plugins.test.ts`
-6. Update documentation in `apps/docs/`
-
-See [Contributing](CONTRIBUTING.md) and the [Custom Policies Guide](apps/docs/guides/custom-policies.md) for details.
+See the [Security Model](https://smartagentkit.github.io/smartagentkit/security/model) for the full threat model and known limitations.
 
 ## Packages
 
@@ -374,12 +369,11 @@ smartagentkit/
 
 ## Contributing
 
-We welcome contributions, especially new policy plugins. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
-Good starting points:
-- Pick a policy from the [Wanted Policies](#wanted-policies-good-first-contributions) list above
+To contribute a policy plugin:
 - Run the [Policy Playground](#policy-playground) to understand the plugin architecture
-- Read the [Custom Policies Guide](apps/docs/guides/custom-policies.md) for the full walkthrough
+- Read the [Custom Policies Guide](https://smartagentkit.github.io/smartagentkit/guides/custom-policies) for the full walkthrough
 
 ## Changelog
 

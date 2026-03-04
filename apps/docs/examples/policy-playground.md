@@ -56,6 +56,19 @@ export const targetBlockerPlugin: PolicyPlugin<TargetBlockerConfig> = {
 
 Then read `src/playground.ts` to see how the plugin is registered and used through the SDK.
 
+## Adapting for Your Own Policy
+
+To use the playground as a starting point for your own policy:
+
+1. Copy `src/custom-plugin.ts` and rename it (e.g., `src/my-policy-plugin.ts`)
+2. Change `id`, `name`, and the config interface to match your policy
+3. Update `encodeInitData` to produce the bytes your Solidity `onInstall` expects
+4. Update `validateConfig` with your own config checks
+5. Import and register your plugin in `playground.ts` instead of the TargetBlockerPlugin
+6. Run `pnpm start:mock` to verify registration, validation, and encoding work
+
+Once your plugin works in the playground, move on to writing the Solidity hook and deploying it. See the [Custom Policies Guide](/guides/custom-policies) for the full end-to-end walkthrough.
+
 ## For Contributors
 
 If you are thinking about contributing a new policy plugin, the playground is the fastest way to understand the full lifecycle:

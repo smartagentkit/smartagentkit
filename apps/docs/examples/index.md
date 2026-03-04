@@ -1,6 +1,6 @@
 # Examples
 
-SmartAgentKit ships with five runnable example projects that demonstrate different architectures, from LLM-powered autonomous agents to deterministic automation bots.
+SmartAgentKit ships with six runnable example projects that demonstrate different architectures, from LLM-powered autonomous agents to deterministic automation bots.
 
 ## Overview
 

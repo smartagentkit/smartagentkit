@@ -121,20 +121,7 @@ New policy plugins are one of the most impactful contributions you can make. Sma
 
 1. Run the [Policy Playground](/examples/policy-playground) to understand how plugins work
 2. Read the [Custom Policies Guide](/guides/custom-policies) for the full walkthrough
-3. Pick an idea from the wishlist below, or propose your own
-
-### Policy Wishlist
-
-These are policy ideas that would be useful to the community. Each is a self-contained project suitable for a first contribution:
-
-| Policy | Description | Module Type | Difficulty |
-|---|---|---|---|
-| **VelocityLimitPolicy** | Rate-limit the number of transactions per time window (e.g., max 10 txs/hour) | Hook | Beginner |
-| **USDOracleBudgetPolicy** | Spending limits denominated in USD using a Chainlink price feed | Hook | Intermediate |
-| **GasCapPolicy** | Cap the total gas the wallet can consume per time window | Hook | Intermediate |
-| **MultiRoleSessionPolicy** | Named roles (admin, trader, viewer) with different session permissions | Validator | Advanced |
-| **ChainRestrictedPolicy** | Block cross-chain bridging by blocking known bridge contract addresses | Hook | Beginner |
-| **FunctionSelectorPolicy** | Fine-grained per-function rate limits (e.g., max 5 `swap()` calls per hour) | Hook | Intermediate |
+3. Open an issue to discuss your idea before starting
 
 ### What a Policy Contribution Includes
 
