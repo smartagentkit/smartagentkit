@@ -76,6 +76,32 @@ import {
   getRemoveAction,
 } from "./sessions.js";
 
+// ─── DACS-Standard Guardrail (§9.5.7 & §14.4) ─────────────────────────────
+
+export interface DacsMandateMeta {
+  dacsMandate?: string;
+  dacsSessionId?: string;
+  dacsMaxAmount?: bigint | string | number;
+}
+
+export function assertDacsSpendMandate(
+  requestedValue: bigint,
+  meta?: DacsMandateMeta,
+): void {
+  if (!meta || (!meta.dacsMandate && !meta.dacsSessionId)) {
+    return;
+  }
+
+  if (meta.dacsMaxAmount !== undefined) {
+    const ceiling = BigInt(meta.dacsMaxAmount);
+    if (requestedValue > ceiling) {
+      throw new ExecutionError(
+        `[DACS-Standard §9.5.7] SmartAgentKit execution aborted: requested spend (${requestedValue.toString()}) exceeds authorized mandate ceiling (${ceiling.toString()}).`,
+      );
+    }
+  }
+}
+
 // ─── Internal Types ──────────────────────────────────────────────
 
 /** Extended SmartAccountClient with ERC-7579 actions */
@@ -132,8 +158,8 @@ function wrapHookInitData(rawInitData: Hex): Hex {
  *
  * const client = new SmartAgentKitClient({
  *   chain: baseSepolia,
- *   rpcUrl: "https://base-sepolia.g.alchemy.com/v2/...",
- *   bundlerUrl: "https://api.pimlico.io/v2/base-sepolia/rpc?apikey=...",
+ *   rpcUrl: "[https://base-sepolia.g.alchemy.com/v2/](https://base-sepolia.g.alchemy.com/v2/)...",
+ *   bundlerUrl: "[https://api.pimlico.io/v2/base-sepolia/rpc?apikey=](https://api.pimlico.io/v2/base-sepolia/rpc?apikey=)...",
  *   moduleAddresses: {
  *     spendingLimitHook: "0x...",
  *     allowlistHook: "0x...",
@@ -756,9 +782,15 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    * The transaction is submitted as a UserOperation through the bundler.
    * Hooks (spending limits, allowlist, pause) are enforced on-chain.
    */
-  async execute(wallet: AgentWallet, params: ExecuteParams): Promise<Hex> {
+  async execute(
+    wallet: AgentWallet,
+    params: ExecuteParams & DacsMandateMeta,
+  ): Promise<Hex> {
     // Pre-flight validation: block calls to infrastructure contracts and self
     this.validateTransaction(params, wallet.address);
+
+    // DACS-Standard (§9.5.7) Pre-Flight Mandate Enforcement
+    assertDacsSpendMandate(params.value ?? 0n, params);
 
     const client = this.getWalletClient(wallet.address);
 
@@ -789,12 +821,19 @@ export class SmartAgentKitClient implements ISmartAgentKitClient {
    */
   async executeBatch(
     wallet: AgentWallet,
-    params: ExecuteBatchParams,
+    params: ExecuteBatchParams & DacsMandateMeta,
   ): Promise<Hex> {
     // Pre-flight validation: block calls to infrastructure contracts and self
     for (const call of params.calls) {
       this.validateTransaction(call, wallet.address);
     }
+
+    // DACS-Standard (§9.5.7) Pre-Flight Mandate Enforcement across batched calls
+    const totalBatchValue = params.calls.reduce(
+      (sum, call) => sum + (call.value ?? 0n),
+      0n,
+    );
+    assertDacsSpendMandate(totalBatchValue, params);
 
     const client = this.getWalletClient(wallet.address);
 
